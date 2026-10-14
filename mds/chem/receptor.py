@@ -318,6 +318,14 @@ def prepare_receptor(
         rep.warn(f"Chain break — {line}. Missing segments are NOT rebuilt; residues next to "
                  "the gap get artificial termini.")
 
+    # -- drop residues PDB2PQR cannot handle (incomplete backbone at chain gaps/ends).
+    # Without this, a single stub residue causes "Too few atoms present to reconstruct..."
+    # and the whole workflow fails even though the stub is usually far from the binding site.
+    _drop_backbone_stubs(st, hetero, rep)
+    n_res_in = sum(len(c) for c in st[0])
+    if n_res_in == 0:
+        raise PreparationError("No protein residues remain after cleaning.", rep)
+
     before = _heavy_atom_counts(st)
     cleaned = work / "cleaned.pdb"
     st.write_minimal_pdb(str(cleaned))
@@ -358,13 +366,56 @@ def prepare_receptor(
         lines += [l for l in ion_text.splitlines() if l.startswith("HETATM")]
     prepared.write_text("\n".join(lines) + "\nEND\n")
 
-    # -- Meeko: PDB -> PDBQT
+    # -- Meeko: PDB -> PDBQT.
+    # First attempt is strict. If Meeko refuses because a handful of residues do not match
+    # its templates (common on real PDBs: non-standard C-terminal residues, odd protonation
+    # states, modified residues at chain ends), retry with --allow_bad_res so those residues
+    # are dropped and the rest of the receptor still gets built. Each dropped residue is
+    # named in the report with its distance to the nearest extracted ligand, so the user
+    # can judge whether it affects their binding site.
     pdbqt = out_dir / "receptor.pdbqt"
     code, output = _run_meeko(["--read_pdb", str(prepared), "-p", str(pdbqt)])
     if code != 0 or not pdbqt.exists():
-        tail = "\n".join(output.strip().splitlines()[-8:])
-        rep.error(f"Meeko could not build the receptor PDBQT:\n{tail}")
-        raise PreparationError("Meeko receptor preparation failed", rep)
+        bad_res = _parse_meeko_bad_residues(output)
+        reason = ("template mismatch" if bad_res else
+                  _meeko_crash_residue(output))
+        # Even without a clear residue list we retry once with --allow_bad_res: Meeko sometimes
+        # raises an exception on a single oddball residue instead of listing it as a mismatch.
+        if bad_res or reason:
+            rep.info("Meeko refused the receptor on the strict first pass; retrying with "
+                     "--allow_bad_res to drop problematic residues and keep the rest.")
+            for res_id, dist in _annotate_distances(bad_res, prepared, hetero):
+                near = " (NEAR the extracted ligand — may affect your binding site!)" if dist is not None and dist < 10 else ""
+                dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
+                rep.warn(f"Residue {res_id} dropped by Meeko (template mismatch{dist_text}){near}")
+            if reason and not bad_res:
+                rep.warn(f"Meeko exception on first pass: {reason}. Retrying with --allow_bad_res.")
+            code, output = _run_meeko(["--read_pdb", str(prepared), "-p", str(pdbqt), "--allow_bad_res"])
+            if code == 0 and pdbqt.exists():
+                # The retry output lists exactly which residues it dropped; surface them.
+                dropped = _parse_meeko_bad_residues(output)
+                for res_id, dist in _annotate_distances(dropped, prepared, hetero):
+                    if res_id in bad_res:
+                        continue  # already reported above
+                    near = " (NEAR the extracted ligand — may affect your binding site!)" if dist is not None and dist < 10 else ""
+                    dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
+                    rep.warn(f"Residue {res_id} dropped by Meeko --allow_bad_res{dist_text}{near}")
+        # If Meeko still crashes on a specific residue (physically broken geometry — alt-conf
+        # debris, bad bond lengths — that PDB2PQR trusted but Meeko rejects), delete that
+        # residue by hand and try one more time.
+        if (code != 0 or not pdbqt.exists()) and (crash_res := _meeko_crashed_on(output)):
+            dist = next((d for rid, d in _annotate_distances([crash_res], prepared, hetero)), None)
+            near = " (NEAR the extracted ligand — may affect your binding site!)" if dist is not None and dist < 10 else ""
+            dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
+            rep.warn(f"Residue {crash_res} removed: physically broken geometry that Meeko cannot "
+                     f"process (likely a disordered side chain from the X-ray data){dist_text}{near}.")
+            fixed = work / "receptor_prepared_fixed.pdb"
+            _write_pdb_without_residue(prepared, fixed, crash_res)
+            code, output = _run_meeko(["--read_pdb", str(fixed), "-p", str(pdbqt), "--allow_bad_res"])
+        if code != 0 or not pdbqt.exists():
+            tail = "\n".join(output.strip().splitlines()[-8:])
+            rep.error(f"Meeko could not build the receptor PDBQT:\n{tail}")
+            raise PreparationError("Meeko receptor preparation failed", rep)
     for line in output.splitlines():
         if "warning" in line.lower():
             rep.warn(f"Meeko: {line.strip()}")
@@ -377,6 +428,167 @@ def prepare_receptor(
 def _minimal_pdb_text(st: gemmi.Structure, scratch: Path) -> str:
     st.write_minimal_pdb(str(scratch))
     return scratch.read_text()
+
+
+# Backbone atom names required by PDB2PQR to keep (or reconstruct a cap for) a residue.
+_BACKBONE = ("N", "CA", "C", "O")
+
+
+def _drop_backbone_stubs(st: gemmi.Structure, hetero: list[HeteroResidue], report: Report) -> None:
+    """Drop polymer residues whose backbone is too incomplete for PDB2PQR to handle.
+
+    These typically sit at the ragged edges of crystallographic chain gaps or the chain's own
+    terminus. Keeping them makes PDB2PQR fail with "Too few atoms present to reconstruct";
+    dropping just them lets the rest of the receptor through.
+    """
+    hetero_centroids = _hetero_centroids(hetero)
+    for ch in list(st[0]):
+        to_remove: list[int] = []
+        for i, res in enumerate(ch):
+            if not _is_polymer_residue(res):
+                continue
+            missing = [n for n in _BACKBONE if res.find_atom(n, "*") is None]
+            # A C-terminal residue with just O missing is a routine case PDB2PQR handles via
+            # OXT; only treat it as a stub if N or CA or C are missing.
+            if not any(a in missing for a in ("N", "CA", "C")):
+                continue
+            to_remove.append(i)
+            dist = _nearest_hetero_distance(res, hetero_centroids)
+            near = " (NEAR an extracted ligand — may affect your binding site!)" \
+                if dist is not None and dist < 10 else ""
+            dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
+            report.warn(f"Residue {res.name} {ch.name}:{res.seqid.num} dropped: incomplete "
+                        f"backbone (missing {', '.join(missing)}); PDB2PQR cannot repair it"
+                        f"{dist_text}{near}.")
+        for i in reversed(to_remove):
+            del ch[i]
+    # chains left empty after removing stubs
+    for name in [c.name for c in st[0] if len(c) == 0]:
+        st[0].remove_chain(name)
+
+
+def _parse_meeko_bad_residues(output: str) -> list[str]:
+    """Extract residue IDs Meeko named as template-match failures, e.g. "A:639"."""
+    import re
+    out: list[str] = []
+    for pattern in (
+        r"Template matching failed for:\s*\[([^\]]+)\]",   # strict run
+        r"Template matching failed for:\s*\['([^']+)'\]",  # retry output format
+    ):
+        for m in re.finditer(pattern, output):
+            out.extend(token.strip().strip("'\"") for token in m.group(1).split(",")
+                       if token.strip())
+    # also Meeko --allow_bad_res summary lines: "'A:639' Ignored due to allow_bad_res"
+    for m in re.finditer(r"\['([^']+)'\]\s+Ignored due to allow_bad_res", output):
+        out.append(m.group(1))
+    # de-duplicate while preserving order
+    seen: set[str] = set()
+    deduped = []
+    for r in out:
+        if r not in seen:
+            deduped.append(r)
+            seen.add(r)
+    return deduped
+
+
+def _meeko_crash_residue(output: str) -> str:
+    """Return a short description if Meeko raised a Python exception on a specific residue."""
+    import re
+    m = re.search(r"RuntimeError:\s*unable to build rdkit mol for residue \S+ corresponding to "
+                  r"key (\S+)", output)
+    if m:
+        return f"could not build molecule for {m.group(1)}"
+    m = re.search(r"RuntimeError:\s*(.+)", output)
+    return m.group(1).strip()[:160] if m else ""
+
+
+def _meeko_crashed_on(output: str) -> str | None:
+    """Return the chain:number key of the residue that triggered a Meeko RuntimeError, if any."""
+    import re
+    m = re.search(r"unable to build rdkit mol for residue \S+ corresponding to key (\S+)", output)
+    return m.group(1) if m else None
+
+
+def _write_pdb_without_residue(src: Path, dst: Path, res_id: str) -> None:
+    """Copy src -> dst, dropping every ATOM/HETATM line of the chain:number residue in res_id."""
+    try:
+        chain, num = res_id.split(":", 1)
+        num_i = int(num)
+    except ValueError:
+        dst.write_text(src.read_text())
+        return
+    kept: list[str] = []
+    for line in src.read_text().splitlines():
+        if line.startswith(("ATOM", "HETATM")):
+            try:
+                line_chain = line[21].strip()
+                line_num = int(line[22:26])
+            except (IndexError, ValueError):
+                kept.append(line)
+                continue
+            if line_chain == chain and line_num == num_i:
+                continue
+        kept.append(line)
+    dst.write_text("\n".join(kept) + "\n")
+
+
+def _annotate_distances(residue_ids: list[str], prepared_pdb: Path,
+                        hetero: list[HeteroResidue]) -> list[tuple[str, float | None]]:
+    """For each 'A:639'-style residue ID, return (res_id, distance_to_nearest_hetero_A)."""
+    centroids = _hetero_centroids(hetero)
+    if not centroids:
+        return [(rid, None) for rid in residue_ids]
+    try:
+        st = gemmi.read_structure(str(prepared_pdb))
+    except Exception:  # noqa: BLE001
+        return [(rid, None) for rid in residue_ids]
+    out = []
+    for rid in residue_ids:
+        try:
+            chain, num = rid.split(":", 1)
+            num = int(num)
+        except ValueError:
+            out.append((rid, None))
+            continue
+        res = next((r for ch in st[0] if ch.name == chain for r in ch if r.seqid.num == num), None)
+        out.append((rid, _nearest_hetero_distance(res, centroids) if res else None))
+    return out
+
+
+def _hetero_centroids(hetero: list[HeteroResidue]) -> dict[str, tuple[float, float, float]]:
+    """Compute centroids of each extracted ligand/metal from the files on disk."""
+    out: dict[str, tuple[float, float, float]] = {}
+    for h in hetero:
+        if h.extracted_to is None or not h.extracted_to.exists():
+            continue
+        xs, ys, zs = [], [], []
+        for line in h.extracted_to.read_text().splitlines():
+            if line.startswith(("ATOM", "HETATM")):
+                try:
+                    xs.append(float(line[30:38]))
+                    ys.append(float(line[38:46]))
+                    zs.append(float(line[46:54]))
+                except ValueError:
+                    continue
+        if xs:
+            out[h.label] = (sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+    return out
+
+
+def _nearest_hetero_distance(res: gemmi.Residue | None,
+                             centroids: dict[str, tuple[float, float, float]]) -> float | None:
+    if res is None or not centroids:
+        return None
+    atoms = [(a.pos.x, a.pos.y, a.pos.z) for a in res]
+    if not atoms:
+        return None
+    best = math.inf
+    for cx, cy, cz in centroids.values():
+        for ax, ay, az in atoms:
+            d = math.sqrt((ax - cx) ** 2 + (ay - cy) ** 2 + (az - cz) ** 2)
+            if d < best:
+                best = d
+    return best if math.isfinite(best) else None
 
 
 def validate_pdbqt(path: Path, report: Report) -> int:

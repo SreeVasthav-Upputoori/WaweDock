@@ -227,3 +227,20 @@ def test_prolif_interactions_classify_real_docked_pose(hiv_protease, tmp_path):
 def test_interaction_caveat_is_conservative():
     from mds.chem.interactions import CAVEAT
     assert "not" in CAVEAT.lower() and "verified" in CAVEAT.lower()
+
+
+# ---------------------------------------------- real-world receptor robustness
+@pytest.mark.parametrize("pdb_name,expect_atoms_above,expect_dropped", [
+    ("1HVR", 1500, True),     # Meeko template mismatch on a residue
+    ("1E66", 4500, True),     # Meeko RuntimeError on a residue with broken alt-conf geometry
+])
+def test_receptor_preparation_recovers_from_meeko_failures(tmp_path, pdb_name, expect_atoms_above,
+                                                           expect_dropped):
+    """Common real PDBs that fail the strict preparation path must now succeed, with the
+    dropped residues reported."""
+    result = prepare_receptor(DATA / f"{pdb_name}.pdb", tmp_path)
+    assert result.n_atoms > expect_atoms_above
+    text = result.report.render()
+    if expect_dropped:
+        assert "dropped by Meeko" in text or "removed:" in text
+        assert "A from nearest extracted ligand" in text  # distance always reported

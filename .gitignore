@@ -12,3 +12,7 @@ dist/
 # Machine-specific
 *.lnk
 .vscode/
+
+# User scratch (not for the repo)
+test/
+
