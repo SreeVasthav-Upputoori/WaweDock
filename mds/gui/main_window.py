@@ -39,6 +39,7 @@ from mds.gui.panels.log_panel import LogPanel
 from mds.gui.panels.project_explorer import ProjectExplorer
 from mds.gui.panels.properties_panel import PropertiesPanel
 from mds.gui.panels.results_panel import ReportPanel, ResultsPanel
+from mds.gui.panels.similarity_dialog import SimilarityDialog
 from mds.gui.status_bar import StudioStatusBar
 from mds.gui.theme import Theme, apply_theme
 from mds.gui.viewport import ViewportHost
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         self.actions_ = ActionRegistry(self)
         self.viewer = None
         self._pose_object = ""
+        self._similarity_dialog: SimilarityDialog | None = None
 
         self._build_central(use_viewer)
         self._build_status_bar()
@@ -205,7 +207,8 @@ class MainWindow(QMainWindow):
         # Analyse
         a.add("analyse.results", "Docking &Results", slot=lambda: (self.dock_results.show(), self.dock_results.raise_()))
         a.add("analyse.descriptors", "Ligand &Descriptors / Drug-likeness…", slot=self._show_descriptors)
-        a.add("analyse.similarity", "&Similarity && Clustering", planned_phase=10)
+        a.add("analyse.similarity", "&Similarity && Clustering…", slot=self._show_similarity,
+              tip="Tanimoto/Morgan fingerprint similarity and clustering of the prepared ligands")
         a.add("analyse.interaction_diagram", "2D Interaction &Diagram", slot=self._show_interactions,
               tip="Protein-ligand interaction fingerprint (ProLIF) for the selected pose")
         # Tools
@@ -608,6 +611,17 @@ class MainWindow(QMainWindow):
         if tabs is not None:
             tabs.setCurrentWidget(self.results_panel.interactions_panel)
         self.results_panel.interactions_panel._analyse()
+
+    def _show_similarity(self) -> None:
+        if len(self.controller.prepared) < 2:
+            QMessageBox.information(self, "Similarity & Clustering",
+                                    "Prepare at least two ligands first.")
+            return
+        if self._similarity_dialog is None:
+            self._similarity_dialog = SimilarityDialog(self.controller, self)
+        self._similarity_dialog.show()
+        self._similarity_dialog.raise_()
+        self._similarity_dialog.activateWindow()
 
     # ---- misc
     def _run_self_test(self) -> None:

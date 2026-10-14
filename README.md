@@ -32,6 +32,8 @@ python -m mds
    for the selected pose (H-bond, hydrophobic, pi-stacking, salt bridge, metal coordination, ...) and
    draws a 2D interaction diagram, entirely offline. **Needs Open Babel** (see below); unavailable
    otherwise, with a clear message rather than a silent failure or a faked result.
+8. **Analyse ▸ Similarity & Clustering** — Tanimoto similarity on Morgan fingerprints and Butina
+   clustering across the prepared ligands, with an optional reference compound to rank against.
 
 Docking scores are predictions from Vina's empirical scoring function — not measured affinities.
 Interaction types are geometric/chemical classifications of a predicted pose (ProLIF), not

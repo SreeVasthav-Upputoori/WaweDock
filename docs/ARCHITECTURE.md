@@ -145,6 +145,7 @@ Delivered ahead of the original phase order at the user's request:
 | Poses & RMSD | Meeko → RDKit, symmetry-aware RMSD | `mds/chem/poses.py` |
 | Contacts | distance-based candidates (conservative) | `mds/chem/contacts.py` |
 | Interactions (Phase 8) | ProLIF fingerprint (H-bond, hydrophobic, pi-stacking, salt bridge, ...) + 2D network diagram, fully offline | `mds/chem/interactions.py` |
+| Similarity & clustering (Phase 10) | Morgan/Tanimoto similarity, Butina clustering, compare-to-reference | `mds/chem/similarity.py` |
 | Projects | folder + `project.json`, run folders with `run.json` | `mds/project.py` |
 | Packaging | PyInstaller one-folder build | `wavedock.spec` |
 
@@ -153,5 +154,4 @@ App Control on the development PC, so they are not used. Open Babel (GPL) is nee
 chemically-correct protein model for ProLIF (Gemmi's bundled monomer templates don't cover
 PDB2PQR's protonation-variant residue names like HID/HIE/ASH/CYX) — kept as an optional,
 separately-installed extra, excluded from the PyInstaller build; see §3's licence note. Still
-open: screening queues/resume (Phase 9), similarity/clustering (Phase 10), flexible side chains,
-code signing (Phase 12).
+open: screening queues/resume (Phase 9), flexible side chains (Phase 11), code signing (Phase 12).

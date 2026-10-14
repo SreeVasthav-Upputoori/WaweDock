@@ -23,7 +23,7 @@ from mds.chem.report import PreparationError, Report
 from mds.chem.workflow import DockingParameters, LigandOutcome, results_rows, write_csv
 from mds.jobs import Job, JobRunner
 from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
-                                   PrepareLigandsJob, PrepareReceptorJob)
+                                   PrepareLigandsJob, PrepareReceptorJob, SimilarityJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -56,6 +56,7 @@ class Controller(QObject):
     docking_finished = Signal(list)             # list[LigandOutcome]
     interactions_started = Signal()
     interactions_ready = Signal(object, int, object)   # LigandOutcome, pose index, InteractionResult
+    similarity_ready = Signal(object)            # SimilarityResult
     report = Signal(str, str)                   # title, text
     message = Signal(str)
     error = Signal(str, str)                    # title, text
@@ -385,6 +386,23 @@ class Controller(QObject):
         protein, interaction_result = result
         self._cached_protein_rdkit = (self.receptor.prepared_pdb, protein)
         self.interactions_ready.emit(outcome, pose_index, interaction_result)
+
+    def compute_similarity(self, cutoff: float, reference_smiles: str = "") -> None:
+        """Tanimoto similarity + clustering of the prepared ligands, run in the background."""
+        if len(self.prepared) < 2:
+            self.error.emit("Not enough ligands", "Prepare at least two ligands first.")
+            return
+        reference = None
+        reference_smiles = reference_smiles.strip()
+        if reference_smiles:
+            reference = Chem.MolFromSmiles(reference_smiles)
+            if reference is None:
+                self.error.emit("Invalid reference", f"Could not parse SMILES: {reference_smiles}")
+                return
+        mols = [p.mol for p in self.prepared]
+        names = [p.name for p in self.prepared]
+        job = SimilarityJob(mols, names, cutoff, reference, reference_smiles)
+        self._submit(job, self.similarity_ready.emit)
 
     # --------------------------------------------------------------- export
     def export_csv(self, path: Path) -> None:

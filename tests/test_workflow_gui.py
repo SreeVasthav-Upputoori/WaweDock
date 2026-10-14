@@ -91,3 +91,35 @@ def test_docking_refuses_to_start_without_prerequisites(window):
     c.error.connect(lambda t, m: errors.append((t, m)))
     c.run_docking(DockingParameters())
     assert errors and "Prepare the receptor" in errors[0][1] and "Define a docking box" in errors[0][1]
+
+
+def test_similarity_via_controller_and_dialog(qapp, settings, tmp_path):
+    """Similarity/clustering needs no receptor or Vina — only prepared ligands."""
+    w = MainWindow(settings, use_viewer=False)
+    w.controller.set_project(Project.create(tmp_path / "simproj"))
+    c = w.controller
+    errors = []
+    c.error.connect(lambda t, m: errors.append((t, m)))
+    try:
+        assert c.add_smiles("CC(=O)Oc1ccccc1C(=O)O", "aspirin")
+        assert c.add_smiles("Oc1ccccc1C(=O)O", "salicylic_acid")
+        assert c.add_smiles("Cn1cnc2c1c(=O)n(C)c(=O)n2C", "caffeine")
+        c.prepare_ligands(ionize="none", n_conformers=1, seed=1)
+        assert wait_until(lambda: len(c.prepared) == 3, 60), errors
+        assert not errors
+
+        results = []
+        c.similarity_ready.connect(results.append)
+        c.compute_similarity(cutoff=0.6)
+        assert wait_until(lambda: bool(results), 30), errors
+        result = results[0]
+        by_name = dict(zip(result.names, result.clusters))
+        assert by_name["aspirin"] == by_name["salicylic_acid"] != by_name["caffeine"]
+
+        # dialog opens and reflects a just-computed result without erroring
+        w._show_similarity()
+        assert w._similarity_dialog is not None and w._similarity_dialog.isVisible()
+        assert not errors
+    finally:
+        w.job_runner.wait_for_done(10000)
+        w.close()

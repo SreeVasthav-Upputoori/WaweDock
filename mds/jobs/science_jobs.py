@@ -8,10 +8,13 @@ from pathlib import Path
 
 from rdkit import Chem
 
+from rdkit import Chem
+
 from mds.chem.ligand import LigandEntry, PreparedLigand, prepare_ligand
 from mds.chem.interactions import InteractionResult, compute_interactions, protein_to_rdkit
 from mds.chem.receptor import ReceptorOptions, ReceptorResult, prepare_receptor
 from mds.chem.report import PreparationError, Report
+from mds.chem.similarity import SimilarityResult, cluster, compare_to_reference
 from mds.chem.workflow import DockingParameters, LigandOutcome, run_docking
 from mds.chem.box import DockingBox
 from mds.engines import VinaEngine
@@ -131,3 +134,23 @@ class InteractionJob(Job):
         result = compute_interactions(protein, self.pose)
         ctx.progress(100, "Interaction analysis complete")
         return protein, result
+
+
+class SimilarityJob(Job):
+    """Tanimoto similarity + Butina clustering of the prepared ligands."""
+
+    def __init__(self, mols: list[Chem.Mol], names: list[str], cutoff: float,
+                 reference: Chem.Mol | None = None, reference_name: str = "") -> None:
+        self.mols, self.names, self.cutoff = mols, names, cutoff
+        self.reference, self.reference_name = reference, reference_name
+        self.name = f"Similarity & clustering ({len(mols)} ligands)"
+
+    def run(self, ctx: JobContext) -> SimilarityResult:
+        ctx.progress(20, "Computing fingerprints")
+        if self.reference is not None:
+            result = compare_to_reference(self.mols, self.names, self.reference, self.reference_name,
+                                          cutoff=self.cutoff)
+        else:
+            result = cluster(self.mols, self.names, cutoff=self.cutoff)
+        ctx.progress(100, "Clustering complete")
+        return result
