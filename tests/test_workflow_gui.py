@@ -58,6 +58,15 @@ def test_full_docking_workflow_and_project_reload(window, tmp_path):
     contacts = c.contacts_for(outcome, 0)
     assert contacts and any("candidate" in x for cc in contacts for x in cc.candidates)
 
+    # ProLIF interaction fingerprint + 2D diagram, run through the controller as a background job
+    interaction_results = []
+    c.interactions_ready.connect(lambda o, i, r: interaction_results.append(r))
+    c.analyze_interactions(outcome, 0)
+    assert wait_until(lambda: bool(interaction_results), 60), errors
+    result = interaction_results[0]
+    assert result.n_interactions > 0 and result.network_html and "unpkg.com" not in result.network_html
+    assert not errors
+
     # export formats
     c.export_csv(tmp_path / "r.csv")
     c.export_sdf(tmp_path / "r.sdf")

@@ -54,15 +54,16 @@
 | Gemmi              | pip wheel                      | Available. Fast PDB/mmCIF parsing, structure inspection.             | MPL-2.0      |
 | BioPython          | pip wheel                      | Available. Secondary structure helpers, sequence handling.           | BSD-like     |
 | **AutoDock Vina**  | **official `vina.exe` release**| **No Windows wheel for cp312 on PyPI.** Run the executable via a subprocess job → also gives clean cancellation (kill the process). | Apache-2.0 |
-| ProLIF             | pip                            | Available. Interaction fingerprints (needs RDKit + MDAnalysis).      | Apache-2.0   |
-| PLIP               | pip                            | Available, pulls OpenBabel 3.2 wheels. Optional second analyser.     | GPL-2.0 ⚠    |
+| ProLIF             | pip                            | In core deps. Interaction fingerprints + 2D diagram (mds/chem/interactions.py). | Apache-2.0 |
+| Open Babel         | pip (`openbabel-wheel`)        | **Optional extra** (`wavedock[interactions]`). Bond perception for ProLIF's protein model; excluded from the PyInstaller build. | GPL-2.0 ⚠ |
+| PLIP               | —                               | Not used (ProLIF covers interaction fingerprinting; avoids a second GPL dependency). | GPL-2.0 ⚠ |
 | PyMOL open-source  | pip wheel                      | Available. Candidate viewer backend (evaluated in Phase 2).          | BSD-like     |
 | VTK                | pip wheel                      | Available. Alternative viewer backend.                               | BSD-3        |
 | Pandas / NumPy     | pip                            | Available.                                                           | BSD-3        |
 | PyQtGraph          | pip                            | Available. Fast in-GUI plots.                                        | MIT          |
 | PyInstaller        | pip                            | Phase 12.                                                            | GPL + exception |
 
-⚠ **Licence note:** PLIP and OpenBabel are GPL. Bundling them into a distributed executable makes the distribution GPL-bound. They are therefore treated as *optional, separately-installed* analysers; ProLIF is the default.
+⚠ **Licence note:** PLIP and Open Babel are GPL. Bundling them into a distributed executable makes the distribution GPL-bound. ProLIF (Apache-2.0) is the interaction analyser; the one GPL dependency it needs from this app — Open Babel, for building a chemically-correct protein model — is an optional extra (`pip install wavedock[interactions]`) that is explicitly excluded from the PyInstaller build (`wavedock.spec`). Without it, interaction analysis reports a clear message instead of silently failing or faking a result.
 
 Optional tools are detected at runtime (`shutil.which`, import probes) and the corresponding features are disabled with an explanatory tooltip when absent — never silently faked.
 
@@ -143,10 +144,14 @@ Delivered ahead of the original phase order at the user's request:
 | Vina | `vina.exe` subprocess adapter, cancellable | `mds/engines/vina.py` |
 | Poses & RMSD | Meeko → RDKit, symmetry-aware RMSD | `mds/chem/poses.py` |
 | Contacts | distance-based candidates (conservative) | `mds/chem/contacts.py` |
+| Interactions (Phase 8) | ProLIF fingerprint (H-bond, hydrophobic, pi-stacking, salt bridge, ...) + 2D network diagram, fully offline | `mds/chem/interactions.py` |
 | Projects | folder + `project.json`, run folders with `run.json` | `mds/project.py` |
 | Packaging | PyInstaller one-folder build | `wavedock.spec` |
 
 Environment findings: OpenMM/PDBFixer and RDKit's `rdMolStandardize` DLLs are blocked by Smart
-App Control on the development PC, so they are not used. Still open: ProLIF interaction
-fingerprints and 2D diagrams (Phase 8), screening queues/resume (Phase 9), similarity/clustering
-(Phase 10), flexible side chains, code signing (Phase 12).
+App Control on the development PC, so they are not used. Open Babel (GPL) is needed to build a
+chemically-correct protein model for ProLIF (Gemmi's bundled monomer templates don't cover
+PDB2PQR's protonation-variant residue names like HID/HIE/ASH/CYX) — kept as an optional,
+separately-installed extra, excluded from the PyInstaller build; see §3's licence note. Still
+open: screening queues/resume (Phase 9), similarity/clustering (Phase 10), flexible side chains,
+code signing (Phase 12).

@@ -9,6 +9,7 @@ from pathlib import Path
 from rdkit import Chem
 
 from mds.chem.ligand import LigandEntry, PreparedLigand, prepare_ligand
+from mds.chem.interactions import InteractionResult, compute_interactions, protein_to_rdkit
 from mds.chem.receptor import ReceptorOptions, ReceptorResult, prepare_receptor
 from mds.chem.report import PreparationError, Report
 from mds.chem.workflow import DockingParameters, LigandOutcome, run_docking
@@ -109,3 +110,24 @@ class DockingJob(Job):
         except DockingCancelled:
             ctx.check_cancelled()
             raise
+
+
+class InteractionJob(Job):
+    """ProLIF interaction fingerprint + 2D diagram for one docked pose.
+
+    Rebuilding the receptor as an RDKit molecule (Open Babel bond perception) is the slow part
+    of this job (roughly a second for a few thousand atoms); the caller passes a cached result
+    in when analysing several poses of the same receptor so it is only built once.
+    """
+
+    def __init__(self, receptor_pdb: Path, pose, *, cached_protein=None) -> None:
+        self.receptor_pdb, self.pose, self.cached_protein = Path(receptor_pdb), pose, cached_protein
+        self.name = "Interaction analysis (ProLIF)"
+
+    def run(self, ctx: JobContext) -> tuple[object, InteractionResult]:
+        ctx.progress(10, "Building protein model")
+        protein = self.cached_protein if self.cached_protein is not None else protein_to_rdkit(self.receptor_pdb)
+        ctx.progress(50, "Running ProLIF fingerprint")
+        result = compute_interactions(protein, self.pose)
+        ctx.progress(100, "Interaction analysis complete")
+        return protein, result

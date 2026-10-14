@@ -15,14 +15,15 @@ from rdkit import Chem
 from mds.chem import box as boxlib
 from mds.chem.box import DockingBox
 from mds.chem.contacts import Contact, load_protein_atoms, pose_contacts
+from mds.chem.interactions import InteractionResult
 from mds.chem.ligand import LigandEntry, PreparedLigand, entry_from_smiles, read_ligands
 from mds.chem.poses import fetch_ccd_template, reference_from_pdb_ligand
 from mds.chem.receptor import HeteroResidue, ReceptorOptions, ReceptorResult, classify_hetero, read_structure
 from mds.chem.report import PreparationError, Report
 from mds.chem.workflow import DockingParameters, LigandOutcome, results_rows, write_csv
 from mds.jobs import Job, JobRunner
-from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, LigandPrepOutcome, PrepareLigandsJob,
-                                   PrepareReceptorJob)
+from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
+                                   PrepareLigandsJob, PrepareReceptorJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -53,6 +54,8 @@ class Controller(QObject):
     reference_changed = Signal(str)             # name or ""
     docking_started = Signal()
     docking_finished = Signal(list)             # list[LigandOutcome]
+    interactions_started = Signal()
+    interactions_ready = Signal(object, int, object)   # LigandOutcome, pose index, InteractionResult
     report = Signal(str, str)                   # title, text
     message = Signal(str)
     error = Signal(str, str)                    # title, text
@@ -75,6 +78,8 @@ class Controller(QObject):
         self.run_dir: Path | None = None
         self._callbacks: dict[int, Callable[[object], None]] = {}
         self._docking_job: int | None = None
+        self._interaction_job: int | None = None
+        self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
         runner.job_finished.connect(self._job_finished)
         runner.job_failed.connect(self._job_failed)
         runner.job_cancelled.connect(self._job_cancelled)
@@ -100,6 +105,8 @@ class Controller(QObject):
         last = tb.strip().splitlines()[-1] if tb.strip() else "unknown error"
         if job_id == self._docking_job:
             self._docking_job = None
+        if job_id == self._interaction_job:
+            self._interaction_job = None
         self.error.emit(self.runner.name(job_id) + " failed", last)
 
     def _job_cancelled(self, job_id: int) -> None:
@@ -107,6 +114,8 @@ class Controller(QObject):
         if job_id == self._docking_job:
             self._docking_job = None
             self.message.emit("Docking cancelled")
+        if job_id == self._interaction_job:
+            self._interaction_job = None
 
     # --------------------------------------------------------------- project
     def ensure_project(self) -> Project:
@@ -129,6 +138,7 @@ class Controller(QObject):
         self.source_pdb, self.receptor, self.box = None, None, None
         self.hetero, self.entries, self.prepared, self.outcomes = [], [], [], []
         self.reference, self.reference_name, self.run_dir = None, "", None
+        self._cached_protein_rdkit = None
 
     # ------------------------------------------------------------- structure
     def load_structure(self, path: Path) -> None:
@@ -350,6 +360,31 @@ class Controller(QObject):
             return []
         atoms = load_protein_atoms(self.receptor.prepared_pdb)
         return pose_contacts(outcome.mols[pose_index], atoms)
+
+    def analyze_interactions(self, outcome: LigandOutcome, pose_index: int) -> None:
+        """ProLIF interaction fingerprint + 2D diagram for one pose, run in the background.
+
+        The receptor's one-time RDKit rebuild (Open Babel bond perception) is cached across
+        calls for the same prepared receptor, so later poses analyse in well under a second.
+        """
+        if self.receptor is None:
+            self.error.emit("No receptor", "Prepare the receptor first.")
+            return
+        if self._interaction_job is not None:
+            return  # a previous request is still running; its result will arrive shortly
+        cached = None
+        if self._cached_protein_rdkit is not None and self._cached_protein_rdkit[0] == self.receptor.prepared_pdb:
+            cached = self._cached_protein_rdkit[1]
+        self.interactions_started.emit()
+        job = InteractionJob(self.receptor.prepared_pdb, outcome.mols[pose_index], cached_protein=cached)
+        self._interaction_job = self.runner.submit(job)
+        self._callbacks[self._interaction_job] = lambda r, o=outcome, i=pose_index: self._interactions_done(o, i, r)
+
+    def _interactions_done(self, outcome: LigandOutcome, pose_index: int, result: tuple) -> None:
+        self._interaction_job = None
+        protein, interaction_result = result
+        self._cached_protein_rdkit = (self.receptor.prepared_pdb, protein)
+        self.interactions_ready.emit(outcome, pose_index, interaction_result)
 
     # --------------------------------------------------------------- export
     def export_csv(self, path: Path) -> None:

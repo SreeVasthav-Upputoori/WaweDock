@@ -17,10 +17,17 @@ dependencies = [
     "numpy",
     "pandas",
     "openpyxl",
+    "prolif",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pyinstaller", "pillow"]
+# Open Babel is GPL-2.0. It is the bond-perception backend for the "Interactions (ProLIF)"
+# feature (mds/chem/interactions.py) and is kept OPTIONAL and separately installed, never
+# bundled into the distributed .exe (excluded in wavedock.spec), so the distribution is not
+# GPL-bound. Without it, interaction analysis reports a clear "not installed" error instead
+# of silently failing or being faked.
+interactions = ["openbabel-wheel"]
 # Scientific stacks are added phase by phase, only once each is tested:
 #   Phase 2: viewer backend      Phase 4: gemmi, biopython
 #   Phase 5: rdkit, meeko        Phase 8: prolif / plip, pandas

@@ -24,7 +24,7 @@ from PySide6.QtGui import (QActionGroup, QCloseEvent, QDesktopServices, QDragEnt
                            QIcon, QKeySequence, QPixmap)
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QInputDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox, QStyle, QTableWidget,
-                               QTableWidgetItem, QToolBar, QVBoxLayout, QDialog, QWidget)
+                               QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QDialog, QWidget)
 from rdkit import Chem
 
 from mds import APP_NAME, __version__
@@ -206,7 +206,8 @@ class MainWindow(QMainWindow):
         a.add("analyse.results", "Docking &Results", slot=lambda: (self.dock_results.show(), self.dock_results.raise_()))
         a.add("analyse.descriptors", "Ligand &Descriptors / Drug-likeness…", slot=self._show_descriptors)
         a.add("analyse.similarity", "&Similarity && Clustering", planned_phase=10)
-        a.add("analyse.interaction_diagram", "2D Interaction &Diagram", planned_phase=8)
+        a.add("analyse.interaction_diagram", "2D Interaction &Diagram", slot=self._show_interactions,
+              tip="Protein-ligand interaction fingerprint (ProLIF) for the selected pose")
         # Tools
         a.add("tools.selftest", "Run Job System &Self-Test", slot=self._run_self_test)
         a.add("tools.cancel_all", "&Cancel All Jobs", slot=self.job_runner.cancel_all)
@@ -596,6 +597,18 @@ class MainWindow(QMainWindow):
         dlg.resize(980, 340)
         dlg.exec()
 
+    def _show_interactions(self) -> None:
+        if not self.controller.outcomes:
+            QMessageBox.information(self, "Interaction diagram", "Run a docking calculation first, "
+                                    "then select a pose in the Results panel.")
+            return
+        self.dock_results.show()
+        self.dock_results.raise_()
+        tabs = self.results_panel.findChild(QTabWidget)
+        if tabs is not None:
+            tabs.setCurrentWidget(self.results_panel.interactions_panel)
+        self.results_panel.interactions_panel._analyse()
+
     # ---- misc
     def _run_self_test(self) -> None:
         self.job_runner.submit(JobSystemSelfTest())
@@ -634,7 +647,9 @@ class MainWindow(QMainWindow):
                     "preparation, AutoDock Vina docking, 3D visualisation and result analysis.</p>"
                     f"<p>Python {platform.python_version()} · Qt {qVersion()} · PySide6 {pyside_version}</p>"
                     "<p><small>AutoDock Vina (Apache-2.0), RDKit (BSD), Meeko (LGPL), Gemmi (MPL-2.0), "
-                    "PDB2PQR/PROPKA, 3Dmol.js (BSD-3).</small></p>" + SCIENTIFIC_NOTICE)
+                    "PDB2PQR/PROPKA, ProLIF (Apache-2.0), 3Dmol.js (BSD-3).<br>"
+                    "Interaction analysis additionally needs Open Babel (GPL-2.0), installed "
+                    "separately — it is not included in this program.</small></p>" + SCIENTIFIC_NOTICE)
         box.exec()
 
     # ======================================================= drag & drop

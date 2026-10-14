@@ -192,3 +192,38 @@ def test_vina_run_can_be_cancelled(trypsin, benzamidine, tmp_path):
     with pytest.raises(DockingCancelled):
         engine.run(req, tmp_path / "w", cancelled=flag.is_set)
     assert time.monotonic() - t0 < 10
+
+
+# ---------------------------------------------------------- interaction fingerprints (ProLIF)
+@pytest.fixture(scope="module")
+def hiv_protease(tmp_path_factory):
+    out = tmp_path_factory.mktemp("hiv_protease")
+    return prepare_receptor(DATA / "1HSG.pdb", out)
+
+
+@needs_vina
+def test_prolif_interactions_classify_real_docked_pose(hiv_protease, tmp_path):
+    from mds.chem.interactions import compute_interactions, protein_to_rdkit
+
+    mk1 = next(h for h in hiv_protease.hetero if h.name == "MK1")
+    prepared = prepare_ligand(entry_from_smiles(
+        "CC(C)(C)NC(=O)[C@@H]1CN(Cc2cccnc2)CCN1C[C@@H](O)C[C@@H](Cc1ccccc1)C(=O)N[C@@H]1c2ccccc2C[C@@H]1O",
+        "indinavir"), seed=1)
+    box = box_from_ligand_file(mk1.extracted_to)
+    outcome = run_docking(engine, hiv_protease.pdbqt, [prepared], box,
+                          DockingParameters(exhaustiveness=8, seed=7, cpu=2), tmp_path / "run")[0]
+    assert outcome.status == "ok"
+
+    protein_rd = protein_to_rdkit(hiv_protease.prepared_pdb)
+    assert protein_rd.GetNumAtoms() > 3000
+    result = compute_interactions(protein_rd, outcome.mols[0])
+    assert result.n_interactions > 0
+    labels = {t for r in result.residues for t in r.interactions}
+    assert any("H-bond" in l or "Hydrophobic" in l or "Van der Waals" in l for l in labels)
+    assert result.network_html and "vis-network.min.js" in result.network_html
+    assert "unpkg.com" not in result.network_html   # must not depend on a live CDN
+
+
+def test_interaction_caveat_is_conservative():
+    from mds.chem.interactions import CAVEAT
+    assert "not" in CAVEAT.lower() and "verified" in CAVEAT.lower()

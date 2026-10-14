@@ -18,6 +18,10 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports + ["openpyxl", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineCore"],
+    # openbabel is GPL-2.0 and kept out of the distribution deliberately (see pyproject.toml's
+    # "interactions" extra and mds/chem/interactions.py) so this build is not GPL-bound; the
+    # "Interactions (ProLIF)" feature is unavailable in this .exe unless it is installed
+    # separately into a from-source environment.
     excludes=["tkinter", "matplotlib", "IPython", "pytest", "openmm", "pdbfixer", "openbabel"],
     noarchive=False,
 )

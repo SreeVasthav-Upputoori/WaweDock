@@ -1,4 +1,4 @@
-"""Docking results: ranked pose table, contacts, exports, and the preparation-report viewer."""
+"""Docking results: ranked pose table, contacts/interactions, exports, and preparation reports."""
 
 from __future__ import annotations
 
@@ -7,11 +7,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
-                               QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget,
-                               QTextEdit, QVBoxLayout, QWidget)
+                               QPushButton, QSplitter, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
 from mds.chem.contacts import CAVEAT
+from mds.chem.interactions import CAVEAT as INTERACTION_CAVEAT
+from mds.chem.interactions import InteractionResult
 from mds.chem.workflow import LigandOutcome, SCORE_DISCLAIMER
+from mds.core.paths import assets_dir
 from mds.gui.controller import Controller
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
@@ -26,6 +29,100 @@ class _NumItem(QTableWidgetItem):
 
     def __lt__(self, other: QTableWidgetItem) -> bool:  # noqa: D105
         return self._v < getattr(other, "_v", float("inf"))
+
+
+class InteractionsPanel(QWidget):
+    """ProLIF-classified interactions for the selected pose: table + 2D network diagram."""
+
+    def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.c = controller
+        self._current: tuple[LigandOutcome, int] | None = None
+
+        self.analyse_btn = QPushButton("Analyse Interactions (ProLIF)")
+        self.analyse_btn.setToolTip("Classifies contacts as hydrogen bonds, hydrophobic contacts, "
+                                    "pi-stacking, salt bridges, etc. using distance AND angle rules.")
+        self.analyse_btn.clicked.connect(self._analyse)
+        self.status = QLabel("Select a pose, then click Analyse.")
+        self.status.setWordWrap(True)
+
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Residue", "Interaction type(s)"])
+        self.table.verticalHeader().hide()
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+
+        self._diagram_stack = QStackedWidget()
+        self._placeholder = QLabel("<i>No diagram yet.</i>")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._diagram_stack.addWidget(self._placeholder)
+        self._diagram = None   # created lazily: QtWebEngine import is somewhat heavy
+
+        caveat = QLabel(f"<small>{INTERACTION_CAVEAT}</small>")
+        caveat.setWordWrap(True)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(self.table)
+        split.addWidget(self._diagram_stack)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 2)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        bar = QHBoxLayout()
+        bar.addWidget(self.analyse_btn)
+        bar.addWidget(self.status, 1)
+        layout.addLayout(bar)
+        layout.addWidget(split, 1)
+        layout.addWidget(caveat)
+
+        controller.interactions_started.connect(self._started)
+        controller.interactions_ready.connect(self._ready)
+
+    def set_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
+        self._current = (outcome, pose_index)
+        self.table.setRowCount(0)
+        self._diagram_stack.setCurrentWidget(self._placeholder)
+        self._placeholder.setText("<i>No diagram yet — click Analyse Interactions.</i>")
+        self.status.setText(f"Ready to analyse {outcome.name} pose #{outcome.poses[pose_index].rank}.")
+
+    def _analyse(self) -> None:
+        if self._current is None:
+            self.status.setText("Select a pose in the results table first.")
+            return
+        self.c.analyze_interactions(*self._current)
+
+    def _started(self) -> None:
+        self.analyse_btn.setEnabled(False)
+        self.status.setText("Analysing… (building protein model, running ProLIF)")
+
+    def _ready(self, outcome: LigandOutcome, pose_index: int, result: InteractionResult) -> None:
+        self.analyse_btn.setEnabled(True)
+        if self._current != (outcome, pose_index):
+            return  # selection moved on while this was running; discard
+        self.status.setText(f"{result.n_interactions} interaction(s) across {len(result.residues)} "
+                            f"residue(s) for {outcome.name} pose #{outcome.poses[pose_index].rank}.")
+        self.table.setRowCount(len(result.residues))
+        for r, ri in enumerate(result.residues):
+            self.table.setItem(r, 0, QTableWidgetItem(ri.residue))
+            self.table.setItem(r, 1, QTableWidgetItem(", ".join(ri.interactions)))
+        if result.network_html:
+            self._show_diagram(result.network_html)
+        else:
+            self._placeholder.setText("<i>No 2D diagram available for this pose "
+                                      "(no interactions detected, or the diagram could not be built).</i>")
+            self._diagram_stack.setCurrentWidget(self._placeholder)
+
+    def _show_diagram(self, html_text: str) -> None:
+        if self._diagram is None:
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+            self._diagram = QWebEngineView()
+            self._diagram_stack.addWidget(self._diagram)
+        from PySide6.QtCore import QUrl
+        base = QUrl.fromLocalFile(str(assets_dir() / "viewer") + "/")
+        self._diagram.setHtml(html_text, base)
+        self._diagram_stack.setCurrentWidget(self._diagram)
 
 
 class ResultsPanel(QWidget):
@@ -62,9 +159,14 @@ class ResultsPanel(QWidget):
         cl.addWidget(self.contacts)
         cl.addWidget(caveat)
 
+        self.interactions_panel = InteractionsPanel(controller)
+        side_tabs = QTabWidget()
+        side_tabs.addTab(contact_box, "Distance-based contacts")
+        side_tabs.addTab(self.interactions_panel, "Interactions (ProLIF)")
+
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.table)
-        split.addWidget(contact_box)
+        split.addWidget(side_tabs)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 2)
 
@@ -134,6 +236,7 @@ class ResultsPanel(QWidget):
         idx = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
         outcome, pose_i = self._rows[idx]
         self._show_contacts(outcome, pose_i)
+        self.interactions_panel.set_pose(outcome, pose_i)
         self.pose_selected.emit(outcome, pose_i)
 
     def _show_contacts(self, outcome: LigandOutcome, pose_i: int) -> None:
