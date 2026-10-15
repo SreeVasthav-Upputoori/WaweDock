@@ -25,6 +25,7 @@ class ProjectExplorer(QWidget):
     color_requested = Signal(str, str)
     zoom_requested = Signal(str)
     remove_requested = Signal(str)
+    objects_changed = Signal()                   # object was added or removed
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -63,11 +64,31 @@ class ProjectExplorer(QWidget):
                     return cat.child(r)
         return None
 
+    def kind_of(self, obj: str) -> str:
+        """Return the stored ``kind`` of ``obj`` (``"protein"``, ``"ligand"``, …) or ``""``."""
+        item = self.find(obj)
+        return (item.data(KindRole) or "") if item is not None else ""
+
+    def is_visible(self, obj: str) -> bool:
+        item = self.find(obj)
+        return bool(item is not None and item.checkState() == Qt.CheckState.Checked)
+
+    def all_object_names(self, kinds: tuple[str, ...] | None = None) -> list[str]:
+        """Every object name in the workspace, optionally restricted to given kinds."""
+        out: list[str] = []
+        for cat in self._categories.values():
+            for r in range(cat.rowCount()):
+                item = cat.child(r)
+                if kinds is None or (item.data(KindRole) or "") in kinds:
+                    out.append(item.data(ObjectRole))
+        return out
+
     def upsert_object(self, category: str, name: str, props: dict, *, visible: bool = True,
                       kind: str = "protein") -> None:
         item = self.find(name)
         self._updating = True
-        if item is None:
+        added = item is None
+        if added:
             item = QStandardItem(name)
             item.setEditable(False)
             item.setCheckable(True)
@@ -78,14 +99,20 @@ class ProjectExplorer(QWidget):
         item.setCheckState(Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
         self._updating = False
         self.view.expandAll()
+        if added:
+            self.objects_changed.emit()
 
     def remove_object(self, name: str) -> None:
         item = self.find(name)
         if item is not None:
             item.parent().removeRow(item.row())
+            self.objects_changed.emit()
 
     def clear_category(self, category: str) -> None:
-        self._categories[category].removeRows(0, self._categories[category].rowCount())
+        cat = self._categories[category]
+        if cat.rowCount():
+            cat.removeRows(0, cat.rowCount())
+            self.objects_changed.emit()
 
     def set_visible(self, name: str, visible: bool) -> None:
         item = self.find(name)

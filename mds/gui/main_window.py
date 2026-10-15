@@ -37,6 +37,7 @@ from mds.gui.panels.docking_panel import DockingPanel
 from mds.gui.panels.jobs_panel import JobsPanel
 from mds.gui.panels.log_panel import LogPanel
 from mds.gui.panels.project_explorer import ProjectExplorer
+from mds.gui.panels.appearance_panel import AppearancePanel
 from mds.gui.panels.properties_panel import PropertiesPanel
 from mds.gui.panels.results_panel import ReportPanel, ResultsPanel
 from mds.gui.panels.similarity_dialog import SimilarityDialog
@@ -129,6 +130,7 @@ class MainWindow(QMainWindow):
         left, right, bottom = (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
                                Qt.DockWidgetArea.BottomDockWidgetArea)
         self.project_explorer = ProjectExplorer()
+        self.appearance = AppearancePanel(self.project_explorer, self._viewer_call)
         self.properties = PropertiesPanel()
         self.docking_panel = DockingPanel(self.controller)
         self.results_panel = ResultsPanel(self.controller)
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
         self.jobs_panel = JobsPanel(self.job_runner)
 
         self.dock_project = self._add_dock(self.project_explorer, "Project Explorer", "dockProject", left)
+        self.dock_appearance = self._add_dock(self.appearance, "Appearance", "dockAppearance", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
         self.dock_results = self._add_dock(self.results_panel, "Results", "dockResults", bottom)
@@ -263,8 +266,8 @@ class MainWindow(QMainWindow):
         m.addMenu("&Diagnostics").addAction(a["tools.selftest"])
         m = mb.addMenu("&Window")
         panels = m.addMenu("&Panels")
-        for dock in (self.dock_project, self.dock_docking, self.dock_properties, self.dock_results,
-                     self.dock_report, self.dock_log, self.dock_jobs):
+        for dock in (self.dock_project, self.dock_appearance, self.dock_docking, self.dock_properties,
+                     self.dock_results, self.dock_report, self.dock_log, self.dock_jobs):
             panels.addAction(dock.toggleViewAction())
         m.addSeparator()
         m.addAction(a["window.save_layout"])
