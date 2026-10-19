@@ -40,6 +40,7 @@ class _Page(QWebEnginePage):
 class Mol3DViewer(QWebEngineView):
     atom_info = Signal(str)
     measurement = Signal(str)
+    selection_changed = Signal(dict, str)       # detail {object: [{chain, resi}, …]}, summary
     ready = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -52,6 +53,7 @@ class Mol3DViewer(QWebEngineView):
         # Protocol attributes (callbacks) map onto the Qt signals.
         self.on_atom_info: Callable[[str], None] = self.atom_info.emit
         self.on_measurement: Callable[[str], None] = self.measurement.emit
+        self.on_selection: Callable[[dict, str], None] = self.selection_changed.emit
         self.load(QUrl.fromLocalFile(str(assets_dir() / "viewer" / "viewer.html")))
 
     # -------------------------------------------------------------- plumbing
@@ -68,6 +70,9 @@ class Mol3DViewer(QWebEngineView):
             self.on_atom_info(str(data))
         elif kind == "measure":
             self.on_measurement(str(data))
+        elif kind == "selection":
+            payload = data if isinstance(data, dict) else {}
+            self.on_selection(payload.get("detail", {}) or {}, str(payload.get("summary", "")))
 
     def _call(self, fn: str, *args: object) -> None:
         js = f"{fn}({', '.join(json.dumps(a) for a in args)});"
@@ -118,6 +123,20 @@ class Mol3DViewer(QWebEngineView):
 
     def set_background(self, dark: bool) -> None:
         self._call("setBackground", dark)
+
+    # Selection ---------------------------------------------------------------
+    def clear_selection(self) -> None:
+        self._call("clearSelection")
+
+    def expand_selection_to_chain(self) -> None:
+        self._call("expandSelectionToChain")
+
+    def invert_selection(self) -> None:
+        self._call("invertSelection")
+
+    def set_selection(self, detail: dict) -> None:
+        """Overwrite the viewer's selection with ``detail`` (object -> list of residues)."""
+        self._call("setSelectionFromPython", detail)
 
     def export_image(self, path: str, scale: int = 3) -> None:
         """Render at ``scale`` x the on-screen resolution and save a PNG."""

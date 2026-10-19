@@ -96,9 +96,11 @@ function addObject(name, data, fmt, kind) {
 function removeObject(name) {
   const o = objects[name]; if (!o) return;
   if (o.surf !== undefined) viewer.removeSurface(o.surf);
-  viewer.removeModel(o.model); delete objects[name]; viewer.render();
+  viewer.removeModel(o.model); delete objects[name];
+  if (selection[name]) { delete selection[name]; if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); if (typeof emitSelection === "function") emitSelection(); }
+  viewer.render();
 }
-function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); viewer.render(); } }
+function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); viewer.render(); } if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
 function setRepresentation(name, rep) { const o = objects[name]; if (!o) return; o.rep = rep; applyStyle(name); }
 function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.color = c; applyStyle(name); }
 function zoomTo(name) { if (name && objects[name]) viewer.zoomTo({model: objects[name].model.getID()}); else viewer.zoomTo(); viewer.render(); }
@@ -183,6 +185,233 @@ function onPick(atom) {
   picks = []; viewer.render();
 }
 viewer.setClickable({}, true, function (atom) { onPick(atom); });
+
+// =================================================================== SELECTION
+// Discovery-Studio-style selection: residue-level (the smallest unit researchers reason
+// about for docking), with:
+//   * click   -> replace selection with this residue
+//   * shift+click -> add/remove this residue
+//   * ctrl+click  -> same as shift (friendlier for people used to Discovery Studio)
+//   * alt+drag    -> lasso-box selection (project all atoms to screen, box-test)
+//   * Esc         -> clear selection
+//
+// Selection is a per-object set of "chain|resi" strings (the residue IDs are what Python
+// needs to delete, hide or isolate them later).  Highlights use a yellow transparent
+// sphere halo so they do not fight with the active representation.
+
+const selection = {};        // objectName -> Set<"chain|resi">
+let selectionShapes = [];    // viewer labels/shapes we added as highlights
+
+function selKey(a) { return a.chain + "|" + a.resi; }
+
+function selectionCount() {
+  let residues = 0, chains = new Set(), objectsHit = 0;
+  Object.keys(selection).forEach(name => {
+    if (selection[name] && selection[name].size) {
+      objectsHit++;
+      residues += selection[name].size;
+      selection[name].forEach(k => chains.add(name + "|" + k.split("|")[0]));
+    }
+  });
+  return {residues: residues, chains: chains.size, objects: objectsHit};
+}
+
+function emitSelection() {
+  // Give Python the full detail (residue set per object) and a short status string.
+  const detail = {};
+  Object.keys(selection).forEach(name => {
+    detail[name] = Array.from(selection[name] || []).map(k => {
+      const [ch, ri] = k.split("|");
+      return {chain: ch, resi: parseInt(ri)};
+    });
+  });
+  const c = selectionCount();
+  const msg = c.residues === 0 ? "" :
+      c.residues + " residue(s)" + (c.chains > 1 ? ", " + c.chains + " chain(s)" : "") +
+      (c.objects > 1 ? ", across " + c.objects + " objects" : "");
+  emit("selection", {detail: detail, summary: msg});
+}
+
+function clearSelectionHighlights() {
+  selectionShapes.forEach(s => { try { viewer.removeShape(s); } catch (e) {} });
+  selectionShapes = [];
+}
+
+function reapplySelectionHighlights() {
+  clearSelectionHighlights();
+  Object.keys(selection).forEach(name => {
+    const o = objects[name];
+    const set = selection[name];
+    if (!o || !set || !set.size || !o.visible) return;
+    const byChain = {};
+    set.forEach(k => { const [ch, ri] = k.split("|"); (byChain[ch] = byChain[ch] || []).push(parseInt(ri)); });
+    Object.keys(byChain).forEach(ch => {
+      const atoms = o.model.selectedAtoms({chain: ch, resi: byChain[ch]});
+      atoms.forEach(a => {
+        selectionShapes.push(viewer.addSphere({center: {x: a.x, y: a.y, z: a.z},
+                                               radius: 0.9, color: "#fde047", opacity: 0.55}));
+      });
+    });
+  });
+  viewer.render();
+}
+
+function objectOfAtom(atom) {
+  // 3Dmol atom click gives .model which carries the model id; match to our registry.
+  const mid = atom.model !== undefined ? atom.model :
+              (atom.serial !== undefined ? -1 : null);
+  for (const name in objects) {
+    if (objects[name].model.getID() === mid) return name;
+  }
+  // Fallback: iterate all and find a matching coordinate.
+  for (const name in objects) {
+    const a = objects[name].model.selectedAtoms({chain: atom.chain, resi: atom.resi, atom: atom.atom});
+    if (a && a.length) return name;
+  }
+  return null;
+}
+
+function toggleResidue(objName, chain, resi, add) {
+  if (!objects[objName]) return;
+  selection[objName] = selection[objName] || new Set();
+  const key = chain + "|" + resi;
+  if (add) {
+    if (selection[objName].has(key)) selection[objName].delete(key);
+    else selection[objName].add(key);
+  } else {
+    // replace: clear ALL selections and set this one
+    Object.keys(selection).forEach(n => selection[n] = new Set());
+    selection[objName].add(key);
+  }
+  reapplySelectionHighlights();
+  emitSelection();
+}
+
+function clearSelection() {
+  Object.keys(selection).forEach(n => selection[n] = new Set());
+  clearSelectionHighlights(); viewer.render();
+  emitSelection();
+}
+
+function selectWholeChain(objName, chain) {
+  const o = objects[objName]; if (!o) return;
+  selection[objName] = selection[objName] || new Set();
+  const atoms = o.model.selectedAtoms({chain: chain});
+  atoms.forEach(a => selection[objName].add(a.chain + "|" + a.resi));
+  reapplySelectionHighlights(); emitSelection();
+}
+
+function expandSelectionToChain() {
+  const chains = new Set();                      // "object|chain"
+  Object.keys(selection).forEach(name => {
+    (selection[name] || new Set()).forEach(k => chains.add(name + "||" + k.split("|")[0]));
+  });
+  chains.forEach(entry => { const [name, ch] = entry.split("||"); selectWholeChain(name, ch); });
+}
+
+function invertSelection() {
+  Object.keys(objects).forEach(name => {
+    const o = objects[name]; if (!o || !o.visible) return;
+    const current = selection[name] || new Set();
+    const next = new Set();
+    const seen = new Set();
+    o.model.selectedAtoms({}).forEach(a => {
+      const key = a.chain + "|" + a.resi;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!current.has(key)) next.add(key);
+    });
+    selection[name] = next;
+  });
+  reapplySelectionHighlights(); emitSelection();
+}
+
+function setSelectionFromPython(detail) {
+  Object.keys(objects).forEach(name => {
+    selection[name] = new Set((detail[name] || []).map(r => r.chain + "|" + r.resi));
+  });
+  reapplySelectionHighlights(); emitSelection();
+}
+
+// ----- lasso-box selection via Alt+drag --------------------------------------
+let lassoDiv = null, lassoStart = null;
+const container = document.getElementById("v");
+
+function lassoCreate(x, y) {
+  lassoDiv = document.createElement("div");
+  lassoDiv.style.cssText = "position:absolute; border:1px dashed #0369a1; background:rgba(14,165,233,0.12); " +
+                           "pointer-events:none; z-index:50;";
+  container.appendChild(lassoDiv);
+  lassoStart = {x: x, y: y};
+  lassoDiv.style.left = x + "px"; lassoDiv.style.top = y + "px";
+  lassoDiv.style.width = "0px"; lassoDiv.style.height = "0px";
+}
+
+function lassoUpdate(x, y) {
+  if (!lassoDiv) return;
+  const l = Math.min(x, lassoStart.x), t = Math.min(y, lassoStart.y);
+  const w = Math.abs(x - lassoStart.x), h = Math.abs(y - lassoStart.y);
+  lassoDiv.style.left = l + "px"; lassoDiv.style.top = t + "px";
+  lassoDiv.style.width = w + "px"; lassoDiv.style.height = h + "px";
+}
+
+function lassoFinish(x, y, additive) {
+  if (!lassoDiv) return;
+  const rect = container.getBoundingClientRect();
+  const bx = {l: Math.min(x, lassoStart.x), t: Math.min(y, lassoStart.y),
+              r: Math.max(x, lassoStart.x), b: Math.max(y, lassoStart.y)};
+  container.removeChild(lassoDiv); lassoDiv = null;
+  // Project every atom; include if its screen point is in the box.
+  if (!additive) Object.keys(selection).forEach(n => selection[n] = new Set());
+  Object.keys(objects).forEach(name => {
+    const o = objects[name]; if (!o || !o.visible) return;
+    selection[name] = selection[name] || new Set();
+    const atoms = o.model.selectedAtoms({});
+    for (let i = 0; i < atoms.length; i++) {
+      const a = atoms[i];
+      let p; try { p = viewer.modelToScreen({x: a.x, y: a.y, z: a.z}); } catch (e) { continue; }
+      if (!p) continue;
+      // modelToScreen returns coords relative to the viewer container's upper-left.
+      if (p.x >= bx.l && p.x <= bx.r && p.y >= bx.t && p.y <= bx.b) {
+        selection[name].add(a.chain + "|" + a.resi);
+      }
+    }
+  });
+  reapplySelectionHighlights(); emitSelection();
+}
+
+container.addEventListener("mousedown", function (e) {
+  if (!e.altKey || e.button !== 0) return;
+  e.stopPropagation(); e.preventDefault();
+  const rect = container.getBoundingClientRect();
+  lassoCreate(e.clientX - rect.left, e.clientY - rect.top);
+}, true);
+container.addEventListener("mousemove", function (e) {
+  if (!lassoDiv) return;
+  const rect = container.getBoundingClientRect();
+  lassoUpdate(e.clientX - rect.left, e.clientY - rect.top);
+}, true);
+container.addEventListener("mouseup", function (e) {
+  if (!lassoDiv) return;
+  const rect = container.getBoundingClientRect();
+  lassoFinish(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey || e.ctrlKey);
+}, true);
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") clearSelection();
+});
+
+// ----- re-route the atom click to selection when NOT in a measure mode --------
+const _origOnPick = onPick;
+onPick = function(atom) {
+  _origOnPick(atom);
+  if (measureMode !== "none") return;        // measuring takes priority
+  if (window.event && (window.event.altKey)) return;  // Alt+click is reserved for lasso
+  const name = objectOfAtom(atom);
+  if (!name) return;
+  const shift = window.event && (window.event.shiftKey || window.event.ctrlKey);
+  toggleResidue(name, atom.chain, atom.resi, shift);
+};
+
 
 function exportPng(scale) {
   const canvas = viewer.getCanvas(); const w = canvas.width, h = canvas.height;
