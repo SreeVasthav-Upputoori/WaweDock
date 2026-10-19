@@ -20,7 +20,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from rdkit import Chem, RDLogger
-from rdkit.Chem import AllChem, Crippen, Descriptors, Lipinski, rdMolDescriptors
+# Deliberately NOT importing rdkit.Chem.AllChem: that umbrella pulls rdShapeHelpers whose
+# DLL is blocked by Windows Smart App Control on some machines (same policy that blocks
+# rdMolStandardize).  Use the fine-grained submodules we actually need instead.
+from rdkit.Chem import (Crippen, Descriptors, Lipinski, rdChemReactions, rdDistGeom,
+                        rdForceFieldHelpers, rdMolDescriptors)
 
 from mds.chem.report import PreparationError, Report
 
@@ -174,7 +178,7 @@ def _apply_simple_ionisation(mol: Chem.Mol, report: Report) -> Chem.Mol:
     ]
     out = Chem.RemoveHs(mol)
     for label, smirks in rules:
-        rxn = AllChem.ReactionFromSmarts(smirks)
+        rxn = rdChemReactions.ReactionFromSmarts(smirks)
         n = 0
         while True:
             products = rxn.RunReactants((out,))
@@ -259,14 +263,14 @@ def prepare_ligand(
     mol_h = Chem.AddHs(mol, addCoords=has_3d and keep_input_3d)
     if not (keep_input_3d and has_3d):
         mol_h.RemoveAllConformers()
-        params = AllChem.ETKDGv3()
+        params = rdDistGeom.ETKDGv3()
         params.randomSeed = seed
         params.useSmallRingTorsions = True
         n_req = max(1, n_conformers)
-        cids = list(AllChem.EmbedMultipleConfs(mol_h, numConfs=n_req, params=params))
+        cids = list(rdDistGeom.EmbedMultipleConfs(mol_h, numConfs=n_req, params=params))
         if not cids:
             params.useRandomCoords = True
-            cids = list(AllChem.EmbedMultipleConfs(mol_h, numConfs=n_req, params=params))
+            cids = list(rdDistGeom.EmbedMultipleConfs(mol_h, numConfs=n_req, params=params))
         if not cids:
             rep.error("3D embedding failed (strained or unusual structure).")
             raise PreparationError(f"{entry.name}: 3D embedding failed", rep)
@@ -308,12 +312,12 @@ def _single_conformer(mol: Chem.Mol, conf_id: int) -> Chem.Mol:
 
 
 def _optimise(mol_h: Chem.Mol, rep: Report) -> None:
-    if AllChem.MMFFHasAllMoleculeParams(mol_h):
-        res = AllChem.MMFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
+    if rdForceFieldHelpers.MMFFHasAllMoleculeParams(mol_h):
+        res = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
         converged = sum(1 for c, _ in res if c == 0)
         rep.info(f"MMFF94 optimisation: {converged}/{len(res)} conformer(s) converged.")
         if converged < len(res):
             rep.warn("Some conformers did not converge within 2000 MMFF iterations.")
     else:
-        AllChem.UFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
+        rdForceFieldHelpers.UFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
         rep.warn("MMFF94 parameters unavailable for this molecule; UFF was used instead.")

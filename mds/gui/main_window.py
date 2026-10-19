@@ -39,6 +39,7 @@ from mds.gui.panels.log_panel import LogPanel
 from mds.gui.panels.project_explorer import ProjectExplorer
 from mds.gui.panels.appearance_panel import AppearancePanel
 from mds.gui.panels.properties_panel import PropertiesPanel
+from mds.gui.panels.selection_panel import SelectionPanel
 from mds.gui.panels.results_panel import ReportPanel, ResultsPanel
 from mds.gui.panels.similarity_dialog import SimilarityDialog
 from mds.gui.status_bar import StudioStatusBar
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
                                Qt.DockWidgetArea.BottomDockWidgetArea)
         self.project_explorer = ProjectExplorer()
         self.appearance = AppearancePanel(self.project_explorer, self._viewer_call)
+        self.selection_panel = SelectionPanel(self.controller)
         self.properties = PropertiesPanel()
         self.docking_panel = DockingPanel(self.controller)
         self.results_panel = ResultsPanel(self.controller)
@@ -140,6 +142,7 @@ class MainWindow(QMainWindow):
 
         self.dock_project = self._add_dock(self.project_explorer, "Project Explorer", "dockProject", left)
         self.dock_appearance = self._add_dock(self.appearance, "Appearance", "dockAppearance", left)
+        self.dock_selection = self._add_dock(self.selection_panel, "Selection", "dockSelection", right)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
         self.dock_results = self._add_dock(self.results_panel, "Results", "dockResults", bottom)
@@ -148,6 +151,7 @@ class MainWindow(QMainWindow):
         self.dock_jobs = self._add_dock(self.jobs_panel, "Jobs", "dockJobs", bottom)
 
         self.tabifyDockWidget(self.dock_docking, self.dock_properties)
+        self.tabifyDockWidget(self.dock_properties, self.dock_selection)
         for a, b in ((self.dock_results, self.dock_report), (self.dock_report, self.dock_log),
                      (self.dock_log, self.dock_jobs)):
             self.tabifyDockWidget(a, b)
@@ -267,7 +271,8 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("&Window")
         panels = m.addMenu("&Panels")
         for dock in (self.dock_project, self.dock_appearance, self.dock_docking, self.dock_properties,
-                     self.dock_results, self.dock_report, self.dock_log, self.dock_jobs):
+                     self.dock_selection, self.dock_results, self.dock_report, self.dock_log,
+                     self.dock_jobs):
             panels.addAction(dock.toggleViewAction())
         m.addSeparator()
         m.addAction(a["window.save_layout"])
@@ -322,14 +327,19 @@ class MainWindow(QMainWindow):
         c.error.connect(self._show_error)
         c.project_changed.connect(self._update_title)
         c.structure_loaded.connect(self._on_structure_loaded)
+        c.structure_edited.connect(self._on_structure_edited)
         c.receptor_prepared.connect(self._on_receptor_prepared)
         c.ligands_prepared.connect(self._on_ligands_prepared)
         c.box_changed.connect(self._on_box_changed)
         c.docking_finished.connect(self._on_docking_finished)
+        c.selection_expand_requested.connect(lambda: self._viewer_call("expand_selection_to_chain"))
+        c.selection_invert_requested.connect(lambda: self._viewer_call("invert_selection"))
+        c.selection_changed.connect(self._on_selection_changed_from_controller)
         self.results_panel.pose_selected.connect(self._show_pose)
         if self.viewer is not None:
             self.viewer.atom_info.connect(self.status.set_selection)
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
+            self.viewer.selection_changed.connect(c.set_selection)
 
     # ============================================================ viewer glue
     def _viewer_call(self, method: str, *args) -> None:
@@ -354,6 +364,25 @@ class MainWindow(QMainWindow):
             "Waters": waters, "Hetero groups": ", ".join(ligs) or "none"}, kind="protein")
         self._viewer_call("set_background", self.current_theme() is Theme.DARK)
         self.dock_docking.raise_()
+
+    def _on_structure_edited(self, name: str, path: str) -> None:
+        """Reload the loaded protein after a delete-selection / keep-only edit."""
+        if self.viewer:
+            self.viewer.remove_object(name)
+        self.project_explorer.remove_object(name)
+        # Drop any 'prepared' object we had for the pre-edit structure: it is now stale.
+        prepared_name = f"{name} (prepared)"
+        if self.project_explorer.find(prepared_name) is not None:
+            if self.viewer:
+                self.viewer.remove_object(prepared_name)
+            self.project_explorer.remove_object(prepared_name)
+        self._on_structure_loaded(name, path)
+        self.dock_selection.raise_()
+
+    def _on_selection_changed_from_controller(self, detail: dict, summary: str) -> None:
+        """Keep the viewer in sync when the controller clears the selection (e.g. after edit)."""
+        if not detail and self.viewer is not None:
+            self.viewer.clear_selection()
 
     def _on_receptor_prepared(self, result) -> None:
         raw = self.controller.source_pdb.stem if self.controller.source_pdb else "receptor"

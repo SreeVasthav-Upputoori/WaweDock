@@ -46,7 +46,11 @@ class _ReferenceJob(Job):
 class Controller(QObject):
     project_changed = Signal()
     structure_loaded = Signal(str, str)         # object name, path
+    structure_edited = Signal(str, str)         # object name, path (after delete/keep-only)
     hetero_found = Signal(list)                 # list[HeteroResidue]
+    selection_changed = Signal(dict, str)       # detail, summary
+    selection_expand_requested = Signal()       # main window forwards to viewer
+    selection_invert_requested = Signal()
     receptor_prepared = Signal(object)          # ReceptorResult
     ligands_changed = Signal()
     ligands_prepared = Signal(object)           # LigandPrepOutcome
@@ -81,6 +85,7 @@ class Controller(QObject):
         self._docking_job: int | None = None
         self._interaction_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
+        self.selection: dict[str, list[dict]] = {}    # object_name -> [{"chain", "resi"}]
         runner.job_finished.connect(self._job_finished)
         runner.job_failed.connect(self._job_failed)
         runner.job_cancelled.connect(self._job_cancelled)
@@ -403,6 +408,73 @@ class Controller(QObject):
         names = [p.name for p in self.prepared]
         job = SimilarityJob(mols, names, cutoff, reference, reference_smiles)
         self._submit(job, self.similarity_ready.emit)
+
+    # -------------------------------------------------------------- selection
+    def set_selection(self, detail: dict, summary: str) -> None:
+        """Called when the viewer emits a selection event."""
+        self.selection = detail or {}
+        self.selection_changed.emit(self.selection, summary)
+
+    def clear_selection(self) -> None:
+        self.selection = {}
+        self.selection_changed.emit({}, "")
+
+    def expand_selection_to_chain(self) -> None:
+        """Hand control to the viewer: it knows which chains each selected residue is in."""
+        self.selection_expand_requested.emit()
+
+    def invert_selection(self) -> None:
+        self.selection_invert_requested.emit()
+
+    def _edit_source_pdb(self, residues: list[dict], *, keep: bool) -> None:
+        """Apply delete_residues or keep_only_residues to the loaded structure.
+
+        Writes a new file ``<name>_edited.pdb`` next to the originals, replaces
+        ``self.source_pdb``, and asks the main window to reload it in the viewer.
+        """
+        from mds.chem.edit import delete_residues, keep_only_residues
+        if self.project is None or self.source_pdb is None or not residues:
+            return
+        src = self.source_pdb
+        edits_dir = self.project.prepared_dir("edited_structure")
+        dst = edits_dir / (src.stem + "_edited.pdb")
+        fn = keep_only_residues if keep else delete_residues
+        tuples = [(r["chain"], int(r["resi"])) for r in residues]
+        n = fn(src, dst, tuples)
+        verb = "kept" if keep else "deleted"
+        self.message.emit(f"{n} residue(s) {verb}; structure reloaded as {dst.name}")
+        log.info("Structure edited: %s -> %s (%s %d)", src.name, dst.name, verb, n)
+        # Update the structure state exactly as if the user loaded the edited file,
+        # but keep the project; reset downstream state so the user re-prepares.
+        self.source_pdb = dst
+        self.receptor = None
+        self.hetero = classify_hetero(read_structure(dst))
+        self.hetero_found.emit(self.hetero)
+        self.structure_edited.emit(src.stem, str(dst))
+        self.clear_selection()
+        self.save_project()
+
+    def delete_selected_residues(self) -> None:
+        source_name = self.source_pdb.stem if self.source_pdb else ""
+        residues: list[dict] = []
+        for name, res_list in self.selection.items():
+            if name == source_name:
+                residues.extend(res_list)
+        if not residues:
+            self.error.emit("Delete selection", "Select residues on the loaded protein first.")
+            return
+        self._edit_source_pdb(residues, keep=False)
+
+    def keep_only_selected_residues(self) -> None:
+        source_name = self.source_pdb.stem if self.source_pdb else ""
+        residues: list[dict] = []
+        for name, res_list in self.selection.items():
+            if name == source_name:
+                residues.extend(res_list)
+        if not residues:
+            self.error.emit("Keep only selection", "Select residues on the loaded protein first.")
+            return
+        self._edit_source_pdb(residues, keep=True)
 
     # --------------------------------------------------------------- export
     def export_csv(self, path: Path) -> None:

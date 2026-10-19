@@ -8,10 +8,54 @@ from pathlib import Path
 
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem
+# AllChem umbrella is avoided (its rdShapeHelpers DLL is blocked by Smart App Control on
+# some Windows machines); AssignBondOrdersFromTemplate is pure Python so we inline a copy.
+from rdkit.Chem.rdchem import BondType
 
 from mds.chem.report import PreparationError
 from mds.engines.base import Pose
+
+
+def assign_bond_orders_from_template(refmol: Chem.Mol, mol: Chem.Mol) -> Chem.Mol:
+    """Copy of ``rdkit.Chem.AllChem.AssignBondOrdersFromTemplate`` (pure Python).
+
+    Transfers bond orders from ``refmol`` onto ``mol`` after a substructure match.
+    """
+    refmol2 = Chem.Mol(refmol)
+    mol2 = Chem.Mol(mol)
+    matching = mol2.GetSubstructMatch(refmol2)
+    if not matching:
+        for b in mol2.GetBonds():
+            if b.GetBondType() != BondType.SINGLE:
+                b.SetBondType(BondType.SINGLE)
+                b.SetIsAromatic(False)
+        for b in refmol2.GetBonds():
+            b.SetBondType(BondType.SINGLE)
+            b.SetIsAromatic(False)
+        for a in refmol2.GetAtoms():
+            a.SetFormalCharge(0)
+        for a in mol2.GetAtoms():
+            a.SetFormalCharge(0)
+        matching = mol2.GetSubstructMatch(refmol2)
+    if not matching:
+        raise ValueError("No matching found")
+    for b in refmol.GetBonds():
+        a1 = matching[b.GetBeginAtomIdx()]
+        a2 = matching[b.GetEndAtomIdx()]
+        b2 = mol2.GetBondBetweenAtoms(a1, a2)
+        if b2 is None:
+            raise ValueError("Template bond not found in mol")
+        b2.SetBondType(b.GetBondType())
+        b2.SetIsAromatic(b.GetIsAromatic())
+    for a in refmol.GetAtoms():
+        mol2.GetAtomWithIdx(matching[a.GetIdx()]).SetFormalCharge(a.GetFormalCharge())
+    try:
+        Chem.SanitizeMol(mol2)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Could not sanitise after bond-order transfer: {exc}") from exc
+    if hasattr(mol, "__sssAtoms"):
+        mol2.__sssAtoms = mol.__sssAtoms  # type: ignore[attr-defined]
+    return mol2
 
 log = logging.getLogger("mds.chem.poses")
 
@@ -114,7 +158,7 @@ def reference_from_pdb_ligand(ligand_pdb: Path, template: Chem.Mol) -> Chem.Mol:
     if raw is None:
         raise PreparationError(f"Could not read ligand coordinates from {ligand_pdb.name}")
     try:
-        ref = AllChem.AssignBondOrdersFromTemplate(template, raw)
+        ref = assign_bond_orders_from_template(template, raw)
     except Exception as exc:  # noqa: BLE001
         raise PreparationError(f"Ligand {ligand_pdb.name} does not match its chemical definition: "
                                f"{exc}") from exc

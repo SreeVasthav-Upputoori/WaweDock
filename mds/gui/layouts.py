@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QMainWindow
 
 log = logging.getLogger("mds.gui.layouts")
 
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 
 
 class LayoutManager:
