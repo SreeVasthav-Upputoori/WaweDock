@@ -49,8 +49,13 @@ class Controller(QObject):
     structure_edited = Signal(str, str)         # object name, path (after delete/keep-only)
     hetero_found = Signal(list)                 # list[HeteroResidue]
     selection_changed = Signal(dict, str)       # detail, summary
+    selection_cleared = Signal()
     selection_expand_requested = Signal()       # main window forwards to viewer
     selection_invert_requested = Signal()
+    selection_mode_requested = Signal(str)
+    selection_radius_requested = Signal(float)
+    edit_history_changed = Signal(bool, bool)
+    editing_view_requested = Signal()
     receptor_prepared = Signal(object)          # ReceptorResult
     ligands_changed = Signal()
     ligands_prepared = Signal(object)           # LigandPrepOutcome
@@ -86,6 +91,8 @@ class Controller(QObject):
         self._interaction_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
         self.selection: dict[str, list[dict]] = {}    # object_name -> [{"chain", "resi"}]
+        self._undo_structures: list[Path] = []
+        self._redo_structures: list[Path] = []
         runner.job_finished.connect(self._job_finished)
         runner.job_failed.connect(self._job_failed)
         runner.job_cancelled.connect(self._job_cancelled)
@@ -145,6 +152,13 @@ class Controller(QObject):
         self.hetero, self.entries, self.prepared, self.outcomes = [], [], [], []
         self.reference, self.reference_name, self.run_dir = None, "", None
         self._cached_protein_rdkit = None
+        self._reset_edit_history()
+
+    def _reset_edit_history(self) -> None:
+        self._undo_structures.clear()
+        self._redo_structures.clear()
+        self.clear_selection()
+        self.edit_history_changed.emit(False, False)
 
     # ------------------------------------------------------------- structure
     def load_structure(self, path: Path) -> None:
@@ -158,6 +172,8 @@ class Controller(QObject):
         copy = project.import_original(path)
         self.source_pdb = copy
         self.receptor = None
+        self._cached_protein_rdkit = None
+        self._reset_edit_history()
         self.hetero = classify_hetero(st)
         self.hetero_found.emit(self.hetero)
         self.structure_loaded.emit(path.stem, str(copy))
@@ -175,7 +191,9 @@ class Controller(QObject):
             return
         project = self.ensure_project()
         out = project.prepared_dir("receptor")
-        self._submit(PrepareReceptorJob(self.source_pdb, out, options), self._receptor_done)
+        source = self.source_pdb
+        self._submit(PrepareReceptorJob(source, out, options),
+                     lambda result: self._receptor_done(result) if self.source_pdb == source else None)
 
     def _receptor_done(self, result: ReceptorResult) -> None:
         self.receptor = result
@@ -418,6 +436,7 @@ class Controller(QObject):
     def clear_selection(self) -> None:
         self.selection = {}
         self.selection_changed.emit({}, "")
+        self.selection_cleared.emit()
 
     def expand_selection_to_chain(self) -> None:
         """Hand control to the viewer: it knows which chains each selected residue is in."""
@@ -427,32 +446,71 @@ class Controller(QObject):
         self.selection_invert_requested.emit()
 
     def _edit_source_pdb(self, residues: list[dict], *, keep: bool) -> None:
-        """Apply delete_residues or keep_only_residues to the loaded structure.
-
-        Writes a new file ``<name>_edited.pdb`` next to the originals, replaces
-        ``self.source_pdb``, and asks the main window to reload it in the viewer.
-        """
-        from mds.chem.edit import delete_residues, keep_only_residues
+        """Write an immutable structural revision and activate it in the viewer."""
+        from uuid import uuid4
+        from mds.chem.edit import edit_atoms
         if self.project is None or self.source_pdb is None or not residues:
             return
         src = self.source_pdb
         edits_dir = self.project.prepared_dir("edited_structure")
-        dst = edits_dir / (src.stem + "_edited.pdb")
-        fn = keep_only_residues if keep else delete_residues
-        tuples = [(r["chain"], int(r["resi"])) for r in residues]
-        n = fn(src, dst, tuples)
-        verb = "kept" if keep else "deleted"
-        self.message.emit(f"{n} residue(s) {verb}; structure reloaded as {dst.name}")
-        log.info("Structure edited: %s -> %s (%s %d)", src.name, dst.name, verb, n)
-        # Update the structure state exactly as if the user loaded the edited file,
-        # but keep the project; reset downstream state so the user re-prepares.
-        self.source_pdb = dst
+        suffix = ".cif" if src.suffix.lower() in (".cif", ".mmcif") else ".pdb"
+        dst = edits_dir / f"structure_{uuid4().hex[:12]}_edited{suffix}"
+        try:
+            n = edit_atoms(src, dst, residues, keep=keep)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.error.emit("Cannot edit structure", str(exc))
+            return
+        if not n:
+            self.message.emit("No atoms changed.")
+            return
+        self._undo_structures.append(src)
+        self._redo_structures.clear()
+        self._activate_structure(dst)
+        self.message.emit(f"Removed {n} atom(s). Undo is available; prepare the receptor again before docking.")
+
+    def _activate_structure(self, path: Path) -> None:
+        import gemmi
+        previous = self.source_pdb
+        st = gemmi.read_structure(str(path))
+        self.source_pdb = path
         self.receptor = None
-        self.hetero = classify_hetero(read_structure(dst))
-        self.hetero_found.emit(self.hetero)
-        self.structure_edited.emit(src.stem, str(dst))
+        self._cached_protein_rdkit = None
+        self.reference, self.reference_name = None, ""
+        self.reference_changed.emit("")
+        self.set_box(None)
+        self.hetero = classify_hetero(st) if len(st) else []
         self.clear_selection()
+        self.hetero_found.emit(self.hetero)
+        self.structure_edited.emit(previous.stem if previous else "", str(path))
+        self.edit_history_changed.emit(bool(self._undo_structures), bool(self._redo_structures))
         self.save_project()
+
+    def undo_structure_edit(self) -> None:
+        if self._undo_structures and self.source_pdb:
+            self._redo_structures.append(self.source_pdb)
+            self._activate_structure(self._undo_structures.pop())
+
+    def redo_structure_edit(self) -> None:
+        if self._redo_structures and self.source_pdb:
+            self._undo_structures.append(self.source_pdb)
+            self._activate_structure(self._redo_structures.pop())
+
+    def cleanup_structure(self, *, waters=False, hetero=False, ligands=False,
+                          remove_chains=(), retain_selected=True) -> None:
+        from mds.chem.edit import cleanup_selection
+        if self.source_pdb is None:
+            return
+        retained = self.selection.get(self.source_pdb.stem, []) if retain_selected else []
+        try:
+            victims = cleanup_selection(self.source_pdb, waters=waters, hetero=hetero,
+                                        ligands=ligands, remove_chains=remove_chains, retain=retained)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.error.emit("Cannot clean up structure", str(exc))
+            return
+        if victims:
+            self._edit_source_pdb(victims, keep=False)
+        else:
+            self.message.emit("No components match the cleanup options.")
 
     def delete_selected_residues(self) -> None:
         source_name = self.source_pdb.stem if self.source_pdb else ""
@@ -525,8 +583,10 @@ class Controller(QObject):
         if st.get("source_structure"):
             src = pr.abs(st["source_structure"])
             if src.exists():
+                import gemmi
                 self.source_pdb = src
-                self.hetero = classify_hetero(read_structure(src))
+                structure = gemmi.read_structure(str(src))
+                self.hetero = classify_hetero(structure) if len(structure) else []
                 self.structure_loaded.emit(src.stem, str(src))
         rec = st.get("receptor")
         if rec and pr.abs(rec["pdbqt"]).exists():

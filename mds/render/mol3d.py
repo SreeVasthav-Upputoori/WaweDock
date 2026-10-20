@@ -13,10 +13,10 @@ import json
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import QPoint, QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from mds.core.paths import assets_dir
 
@@ -42,6 +42,7 @@ class Mol3DViewer(QWebEngineView):
     measurement = Signal(str)
     selection_changed = Signal(dict, str)       # detail {object: [{chain, resi}, …]}, summary
     ready = Signal()
+    edit_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,6 +74,16 @@ class Mol3DViewer(QWebEngineView):
         elif kind == "selection":
             payload = data if isinstance(data, dict) else {}
             self.on_selection(payload.get("detail", {}) or {}, str(payload.get("summary", "")))
+        elif kind == "edit" and data in ("delete", "undo", "redo"):
+            self.edit_requested.emit(str(data))
+        elif kind == "context" and isinstance(data, dict):
+            menu = QMenu(self)
+            menu.addAction("Delete selected atoms", lambda: self.edit_requested.emit("delete"))
+            menu.addAction("Clear selection", self.clear_selection)
+            menu.addSeparator()
+            menu.addAction("Undo structure edit", lambda: self.edit_requested.emit("undo"))
+            menu.addAction("Redo structure edit", lambda: self.edit_requested.emit("redo"))
+            menu.exec(self.mapToGlobal(QPoint(int(data.get("x", 0)), int(data.get("y", 0)))))
 
     def _call(self, fn: str, *args: object) -> None:
         js = f"{fn}({', '.join(json.dumps(a) for a in args)});"
@@ -82,8 +93,9 @@ class Mol3DViewer(QWebEngineView):
             self._queue.append(js)
 
     # ------------------------------------------------------------ ViewerBackend
-    def add_object(self, name: str, data: str, fmt: str, kind: str = "protein") -> None:
-        self._call("addObject", name, data, fmt, kind)
+    def add_object(self, name: str, data: str, fmt: str, kind: str = "protein", identities=None,
+                   preserve_view: bool = False) -> None:
+        self._call("addObject", name, data, fmt, kind, identities, preserve_view)
 
     def remove_object(self, name: str) -> None:
         self._call("removeObject", name)
@@ -127,6 +139,12 @@ class Mol3DViewer(QWebEngineView):
     # Selection ---------------------------------------------------------------
     def clear_selection(self) -> None:
         self._call("clearSelection")
+
+    def set_selection_mode(self, mode: str) -> None:
+        self._call("setSelectionMode", mode)
+
+    def select_within_radius(self, radius: float) -> None:
+        self._call("selectWithinRadius", radius)
 
     def expand_selection_to_chain(self) -> None:
         self._call("expandSelectionToChain")

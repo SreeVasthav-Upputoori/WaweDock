@@ -87,6 +87,8 @@ class MainWindow(QMainWindow):
         self.actions_ = ActionRegistry(self)
         self.viewer = None
         self._pose_object = ""
+        self._receptor_objects: list[str] = []
+        self._source_object = ""
         self._similarity_dialog: SimilarityDialog | None = None
 
         self._build_central(use_viewer)
@@ -100,6 +102,10 @@ class MainWindow(QMainWindow):
         self.layouts = LayoutManager(self, settings)
         self.layouts.capture_default()
         self.layouts.restore_session()
+        # Migrate only this dock once, retaining existing arrangements of all others.
+        if str(settings.value("editing/selectionPanelVersion", "0")) != "1":
+            self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_selection)
+            settings.setValue("editing/selectionPanelVersion", 1)
         self.set_theme(Theme(settings.value("appearance/theme", Theme.LIGHT.value)))
         log.info("%s %s started", APP_NAME, __version__)
 
@@ -142,7 +148,7 @@ class MainWindow(QMainWindow):
 
         self.dock_project = self._add_dock(self.project_explorer, "Project Explorer", "dockProject", left)
         self.dock_appearance = self._add_dock(self.appearance, "Appearance", "dockAppearance", left)
-        self.dock_selection = self._add_dock(self.selection_panel, "Selection", "dockSelection", right)
+        self.dock_selection = self._add_dock(self.selection_panel, "Selection & Cleanup", "dockSelection", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
         self.dock_results = self._add_dock(self.results_panel, "Results", "dockResults", bottom)
@@ -151,7 +157,6 @@ class MainWindow(QMainWindow):
         self.dock_jobs = self._add_dock(self.jobs_panel, "Jobs", "dockJobs", bottom)
 
         self.tabifyDockWidget(self.dock_docking, self.dock_properties)
-        self.tabifyDockWidget(self.dock_properties, self.dock_selection)
         for a, b in ((self.dock_results, self.dock_report), (self.dock_report, self.dock_log),
                      (self.dock_log, self.dock_jobs)):
             self.tabifyDockWidget(a, b)
@@ -183,6 +188,11 @@ class MainWindow(QMainWindow):
         a.add("file.export_image", "Export &Image…", slot=self._export_image)
         a.add("file.exit", "E&xit", slot=self.close, shortcut=sk.Quit)
         # Edit
+        a.add("edit.undo", "Undo Structure Edit", slot=c.undo_structure_edit, shortcut=sk.Undo)
+        a.add("edit.redo", "Redo Structure Edit", slot=c.redo_structure_edit, shortcut=sk.Redo)
+        a.add("edit.delete", "Delete Selected Atoms", slot=c.delete_selected_residues)
+        a["edit.undo"].setEnabled(False)
+        a["edit.redo"].setEnabled(False)
         a.add("edit.select_around", "Show Residues Around Ligand…", slot=self._select_around)
         a.add("edit.clear_selection", "Clear Residue Display", slot=self._clear_around)
         # View
@@ -242,7 +252,8 @@ class MainWindow(QMainWindow):
         menu("&File", ["file.new", "file.open", "file.save", "file.save_as", "file.archive", None,
                        "file.open_structure", "file.fetch_pdb", "file.import_ligands", "file.export_image", None,
                        "file.exit"])
-        menu("&Edit", ["edit.select_around", "edit.clear_selection"])
+        menu("&Edit", ["edit.undo", "edit.redo", "edit.delete", None,
+                       "edit.select_around", "edit.clear_selection"])
         m = mb.addMenu("&View")
         theme_menu = m.addMenu("&Theme")
         group = QActionGroup(self)
@@ -334,12 +345,39 @@ class MainWindow(QMainWindow):
         c.docking_finished.connect(self._on_docking_finished)
         c.selection_expand_requested.connect(lambda: self._viewer_call("expand_selection_to_chain"))
         c.selection_invert_requested.connect(lambda: self._viewer_call("invert_selection"))
-        c.selection_changed.connect(self._on_selection_changed_from_controller)
+        c.selection_mode_requested.connect(lambda mode: self._viewer_call("set_selection_mode", mode))
+        c.selection_radius_requested.connect(lambda radius: self._viewer_call("select_within_radius", radius))
+        c.edit_history_changed.connect(self._on_edit_history)
+        c.editing_view_requested.connect(self._show_editing_structure)
+        c.selection_cleared.connect(lambda: self._viewer_call("clear_selection"))
         self.results_panel.pose_selected.connect(self._show_pose)
         if self.viewer is not None:
             self.viewer.atom_info.connect(self.status.set_selection)
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)
+            self.viewer.edit_requested.connect(self._on_viewer_edit)
+
+    def _on_edit_history(self, undo: bool, redo: bool) -> None:
+        self.actions_["edit.undo"].setEnabled(undo)
+        self.actions_["edit.redo"].setEnabled(redo)
+
+    def _on_viewer_edit(self, action: str) -> None:
+        handlers = {"delete": self.controller.delete_selected_residues,
+                    "undo": self.controller.undo_structure_edit,
+                    "redo": self.controller.redo_structure_edit}
+        if action in handlers:
+            handlers[action]()
+
+    def _show_editing_structure(self) -> None:
+        if self.controller.source_pdb is None:
+            return
+        for name in self._receptor_objects:
+            self.project_explorer.set_visible(name, False)
+            self._viewer_call("set_visible", name, False)
+        source = self.controller.source_pdb.stem
+        self.project_explorer.set_visible(source, True)
+        self._viewer_call("set_visible", source, True)
+        self._viewer_call("set_measure_mode", "none")
 
     # ============================================================ viewer glue
     def _viewer_call(self, method: str, *args) -> None:
@@ -351,11 +389,25 @@ class MainWindow(QMainWindow):
     def _object_props(self, **kw) -> dict:
         return {k: v for k, v in kw.items()}
 
-    def _on_structure_loaded(self, name: str, path: str) -> None:
-        text = Path(path).read_text(errors="replace")
+    def _on_structure_loaded(self, name: str, path: str, *, preserve_view: bool = False) -> None:
+        import gemmi
+        from mds.chem.edit import atom_records
+        if self._source_object and self._source_object != name:
+            self._viewer_call("remove_object", self._source_object)
+            self.project_explorer.remove_object(self._source_object)
+        if not preserve_view:
+            for overlay in self._receptor_objects:
+                self._viewer_call("remove_object", overlay)
+                self.project_explorer.remove_object(overlay)
+            self._receptor_objects.clear()
+        self._source_object = name
+        st = gemmi.read_structure(path)
+        # One canonical representation for PDB and mmCIF. Keep every model, chain,
+        # hydrogen, alternate location, water and hetero group on import.
         fmt = "cif" if Path(path).suffix.lower() in (".cif", ".mmcif") else "pdb"
+        text = st.make_mmcif_document().as_string() if fmt == "cif" else st.make_pdb_string()
         if self.viewer:
-            self.viewer.add_object(name, text, fmt, "protein")
+            self.viewer.add_object(name, text, fmt, "protein", atom_records(st), preserve_view)
         h = self.controller.hetero
         waters = sum(1 for x in h if x.kind == "water")
         ligs = [x.label for x in h if x.kind == "ligand"]
@@ -371,22 +423,20 @@ class MainWindow(QMainWindow):
             self.viewer.remove_object(name)
         self.project_explorer.remove_object(name)
         # Drop any 'prepared' object we had for the pre-edit structure: it is now stale.
-        prepared_name = f"{name} (prepared)"
-        if self.project_explorer.find(prepared_name) is not None:
+        for prepared_name in self._receptor_objects:
             if self.viewer:
                 self.viewer.remove_object(prepared_name)
             self.project_explorer.remove_object(prepared_name)
-        self._on_structure_loaded(name, path)
+        self._receptor_objects.clear()
+        self._viewer_call("clear_measurements")
+        self._viewer_call("clear_residue_selection")
+        self._on_structure_loaded(Path(path).stem, path, preserve_view=True)
         self.dock_selection.raise_()
-
-    def _on_selection_changed_from_controller(self, detail: dict, summary: str) -> None:
-        """Keep the viewer in sync when the controller clears the selection (e.g. after edit)."""
-        if not detail and self.viewer is not None:
-            self.viewer.clear_selection()
 
     def _on_receptor_prepared(self, result) -> None:
         raw = self.controller.source_pdb.stem if self.controller.source_pdb else "receptor"
         name = f"{raw} (prepared)"
+        self._receptor_objects.append(name)
         if self.viewer:
             self.viewer.add_object(name, result.prepared_pdb.read_text(), "pdb", "protein")
         self.project_explorer.upsert_object("Proteins", name, {
@@ -398,6 +448,7 @@ class MainWindow(QMainWindow):
         for h in result.hetero:
             if h.kind == "ligand" and h.extracted_to and self.viewer:
                 label = f"{h.label} (crystal)"
+                self._receptor_objects.append(label)
                 self.viewer.add_object(label, h.extracted_to.read_text(), "pdb", "ligand")
                 self.project_explorer.upsert_object("Ligands", label, {
                     "Type": "Co-crystal ligand (extracted)", "Atoms": h.atoms}, kind="ligand")
@@ -532,6 +583,8 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Opened {project.name}", 6000)
 
     def _reset_workspace(self) -> None:
+        self._receptor_objects.clear()
+        self._source_object = ""
         for cat in ("Proteins", "Ligands", "Docking Boxes", "Docking Poses"):
             for name in self.project_explorer.object_names(cat):
                 self._viewer_call("remove_object", name)
