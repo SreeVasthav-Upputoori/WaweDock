@@ -25,6 +25,9 @@ Open Babel is installed separately into the same environment.
 
 from __future__ import annotations
 
+import json
+import logging
+import math
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -34,6 +37,8 @@ import gemmi
 from rdkit import Chem
 
 from mds.chem.report import PreparationError
+
+log = logging.getLogger(__name__)
 
 CAVEAT = ("Interaction types are calculated from a docked pose using ProLIF's geometric and "
           "chemical rules (distance and angle, not distance alone). They are classifications of "
@@ -77,7 +82,31 @@ def protein_to_rdkit(pdb_path: Path) -> Chem.Mol:
 
     pdb_path = Path(pdb_path)
     st = gemmi.read_structure(str(pdb_path))
-    labels = [(ch.name, res.name, res.seqid.num) for ch in st[0] for res in ch for _ in res]
+    if not len(st) or not st[0].count_atom_sites():
+        raise PreparationError(f"No protein atoms found in {pdb_path.name}")
+    labels = []
+    residue_ids = set()
+    display_labels = {}
+    next_number = max(res.seqid.num for ch in st[0] for res in ch) + 1
+    for ch in st[0]:
+        for res in ch:
+            # ProLIF ignores insertion codes. Give inserted residues unique internal
+            # numbers and retain a display mapping for the table and network diagram.
+            icode = res.seqid.icode.strip()
+            key = (ch.name, res.name, res.seqid.num, icode)
+            if key in residue_ids:
+                raise PreparationError(
+                    f"Ambiguous residue identifier {res.name}{res.seqid} in chain {ch.name!r}"
+                )
+            residue_ids.add(key)
+            number = res.seqid.num
+            if icode:
+                number = next_number
+                next_number += 1
+                chain_suffix = f".{ch.name}" if ch.name else ""
+                display_labels[f"{res.name}{number}{chain_suffix}"] = (
+                    f"{res.name}{res.seqid.num}{icode}{chain_suffix}")
+            labels.extend((ch.name, res.name, number, icode, atom) for atom in res)
 
     ob_mol = next(pybel.readfile("pdb", str(pdb_path)), None)
     if ob_mol is None:
@@ -95,14 +124,28 @@ def protein_to_rdkit(pdb_path: Path) -> Chem.Mol:
                                f"({problems!r})")
 
     rw = Chem.RWMol(mol)
-    for i, (chain, resname, resnum) in enumerate(labels):
+    conf = mol.GetConformer()
+    for i, (chain, resname, resnum, icode, atom) in enumerate(labels):
+        rd_atom = mol.GetAtomWithIdx(i)
+        pos = conf.GetAtomPosition(i)
+        distance = math.dist((pos.x, pos.y, pos.z), (atom.pos.x, atom.pos.y, atom.pos.z))
+        # MOL2 rounds coordinates, so allow a small tolerance but never assign
+        # residue labels solely on the basis of matching atom counts.
+        if rd_atom.GetAtomicNum() != atom.element.atomic_number or not distance <= 0.002:
+            raise PreparationError(
+                f"Atom order mismatch at atom {i + 1} while building the interaction "
+                f"model for {pdb_path.name}"
+            )
         info = Chem.AtomPDBResidueInfo()
         info.SetChainId(chain)
         info.SetResidueName(f"{resname:<3}")
         info.SetResidueNumber(int(resnum))
-        info.SetName(f" {mol.GetAtomWithIdx(i).GetSymbol():<3}")
+        info.SetInsertionCode(icode)
+        info.SetName(f"{atom.name:>4}")
         rw.GetAtomWithIdx(i).SetMonomerInfo(info)
-    return rw.GetMol()
+    result = rw.GetMol()
+    result.SetProp("_mds_residue_labels", json.dumps(display_labels))
+    return result
 
 
 def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bool = True) -> InteractionResult:
@@ -114,19 +157,27 @@ def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bo
 
     prot_mol = Molecule(protein_rdkit)
     lig_mol = Molecule.from_rdkit(Chem.Mol(pose))
+    display_labels = (json.loads(protein_rdkit.GetProp("_mds_residue_labels"))
+                      if protein_rdkit.HasProp("_mds_residue_labels") else {})
 
-    fp = prolif.Fingerprint()
+    fp = prolif.Fingerprint(interactions=[
+        "Hydrophobic", "HBDonor", "HBAcceptor", "PiStacking", "Anionic", "Cationic",
+        "CationPi", "PiCation", "VdWContact", "XBDonor", "XBAcceptor",
+        "MetalDonor", "MetalAcceptor",
+    ], vicinity_cutoff=10.0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         # n_jobs=1: a single pose is fast enough sequentially, and this method may run inside a
         # worker thread (QThreadPool), where spawning a multiprocessing pool is unsafe on Windows.
-        fp.run_from_iterable([lig_mol], prot_mol, residues="all", progress=False, n_jobs=1)
+        # Use a conservative vicinity filter: pi-stacking allows centroid
+        # distances up to 6.5 A, so the default 6 A atom cutoff is too narrow.
+        fp.run_from_iterable([lig_mol], prot_mol, progress=False, n_jobs=1)
 
     by_residue: dict[str, list[str]] = {}
     n = 0
     if fp.ifp:
         for data in fp.ifp[0].interactions():
-            key = _format_residue(data.protein)
+            key = _format_residue(display_labels.get(str(data.protein), str(data.protein)))
             human = _INTERACTION_LABELS.get(data.interaction, data.interaction)
             by_residue.setdefault(key, [])
             if human not in by_residue[key]:
@@ -136,10 +187,11 @@ def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bo
     residues = [ResidueInteractions(res, sorted(types)) for res, types in sorted(by_residue.items())]
 
     html = None
-    if diagram and fp.ifp:
+    if diagram and n:
         try:
-            html = _build_network_html(fp, lig_mol, prot_mol)
+            html = _build_network_html(fp, lig_mol, display_labels)
         except Exception:  # noqa: BLE001 — diagram is a bonus; never fail the analysis for it
+            log.warning("Could not build the interaction diagram", exc_info=True)
             html = None
     return InteractionResult(residues, html, n)
 
@@ -150,12 +202,14 @@ def _format_residue(prot_res) -> str:
     return text.replace(".", ":") if ":" not in text else text
 
 
-def _build_network_html(fp, lig_mol, _prot_mol) -> str:
+def _build_network_html(fp, lig_mol, display_labels=None) -> str:
     from prolif.plotting.network import LigNetwork
 
     # prolif.molecule.Molecule IS an rdkit.Chem.Mol subclass; pass it directly.
     net = LigNetwork.from_fingerprint(fp, lig_mol, kind="frame", frame=0, display_all=False)
     html = net._get_html()
+    for internal, original in (display_labels or {}).items():
+        html = html.replace(json.dumps(internal), json.dumps(original))
     # ProLIF's template loads vis-network's JS and CSS from unpkg.com; replace both with the
     # vendored copies (mds/assets/viewer/vis-network.min.{js,css}) so the diagram renders with
     # no network access. The caller sets the QWebEngineView base URL to that same folder.
