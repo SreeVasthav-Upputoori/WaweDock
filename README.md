@@ -39,6 +39,31 @@ Docking scores are predictions from Vina's empirical scoring function — not me
 Interaction types are geometric/chemical classifications of a predicted pose (ProLIF), not
 experimentally verified interactions.
 
+## Interactive structure editing
+
+Opening a PDB or mmCIF displays all chains, waters, ligands, ions, hydrogens and alternate
+locations. Cleanup happens only when requested; receptor preparation remains a separate step.
+
+Use the **Selection & Cleanup** panel on the left:
+
+- Choose atom, residue, chain, or component selection. Components select a hetero residue
+  (such as a ligand or ion), or a protein chain.
+- Click to select; Shift/Ctrl-click toggles additional components. **Alt-drag** draws a freehand
+  lasso. **Shift+Alt-drag** adds to the selection. The lasso selects through the structure's depth;
+  rotate the view or use a 3D radius to isolate a spatial region.
+- Press **Delete**, use the viewport's right-click menu, or click **Delete selected atoms**.
+  **Keep only selected** removes everything else. These operations change the structure files
+  used by subsequent receptor preparation, with each revision stored in the project.
+- Set a radius in Å and click **Select within radius of selection** to select around the chosen
+  atoms in 3D. The selection mode determines whether hits expand to whole residues or chains.
+- Cleanup can remove waters, HETATM components, non-protein ligands, or named chains. Enable
+  **Retain selected atoms / components** to protect selected items during cleanup.
+- **Undo/Redo** buttons and **Ctrl+Z / Ctrl+Y** reverse structural edits during the current session.
+  Original imported files remain unchanged. After editing, prepare the receptor again before docking.
+
+Prepared receptors and docking poses are analysis overlays. Click **Show imported structure for
+editing** to return to the editable source after preparation.
+
 ## Validation (redocking)
 
 ```powershell
