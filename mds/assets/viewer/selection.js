@@ -59,11 +59,12 @@ function setSelectionMode(mode) {
 function clearSelectionHighlights() {
   selectionStyles.forEach(group => {
     const o = objects[group.name];
-    if (o && o.model === group.model) o.model.setStyle({index: group.indices}, group.style);
+    const indices = new Set(group.indices);
+    if (o && o.model === group.model) o.model.setStyle({predicate: a => indices.has(a.index)}, group.style);
   });
   selectionStyles = [];
 }
-function reapplySelectionHighlights() {
+function reapplySelectionHighlights(render = true) {
   clearSelectionHighlights();
   const names = new Set([...Object.keys(selection), ...Object.keys(visualSelection)]);
   names.forEach(name => {
@@ -99,10 +100,11 @@ function reapplySelectionHighlights() {
       });
       if (!Object.keys(yellow).length) return;
       selectionStyles.push(group);
-      o.model.setStyle({index:group.indices}, yellow);
+      const indices = new Set(group.indices);
+      o.model.setStyle({predicate: a => indices.has(a.index)}, yellow);
     });
   });
-  viewer.render();
+  if (render) viewer.render();
 }
 function visualSelectionCount() {
   let count = 0;
@@ -218,10 +220,15 @@ function setSelectionFromPython(detail) {
   Object.keys(selection).forEach(name => delete selection[name]);
   Object.keys(detail).forEach(name => {
     selection[name] = new Set();
+    const indices = new Set(), residues = new Set(), exactResidues = new Set();
+    detail[name].forEach(r => {
+      if (r.atom_index !== undefined) indices.add(r.atom_index);
+      else if (r.icode === undefined) residues.add(JSON.stringify([r.chain,r.resi]));
+      else exactResidues.add(JSON.stringify([r.chain,r.resi,r.icode]));
+    });
     editableAtoms(name).forEach(a => {
-      if (detail[name].some(r => r.atom_index !== undefined ? r.atom_index === a._wdIdentity.atom_index :
-          r.chain === a.chain && r.resi === a.resi &&
-          (r.icode === undefined || r.icode === a._wdIdentity.icode)))
+      if (indices.has(a._wdIdentity.atom_index) || residues.has(JSON.stringify([a.chain,a.resi])) ||
+          exactResidues.has(JSON.stringify([a.chain,a.resi,a._wdIdentity.icode])))
         selection[name].add(a._wdIdentity.atom_index);
     });
   });

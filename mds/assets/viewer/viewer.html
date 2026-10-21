@@ -89,7 +89,7 @@ function finish(name) {
   reapplyAround();
   Object.values(objects).forEach(applyComponentVisibility);
   refreshObjectLabels(name);
-  reapplySelectionHighlights();
+  reapplySelectionHighlights(false);
   viewer.render();
 }
 
@@ -157,24 +157,37 @@ function componentVisible(o, a) {
 }
 function applyComponentVisibility(o) {
   const hidden = o.model.selectedAtoms({}).filter(a => !componentVisible(o, a)).map(a => a.index);
-  if (hidden.length) o.model.setStyle({index: hidden}, {});
+  if (hidden.length) { const indices = new Set(hidden); o.model.setStyle({predicate: a => indices.has(a.index)}, {}); }
 }
 function setComponentVisible(name, component, visible) {
   const o = objects[name]; if (!o || !(component in o.components)) return;
   o.components[component] = visible; applyStyle(name); emitSelection();
 }
+// 3Dmol's label removal calls show() for every label. Defer those draws
+// until the entire label set is ready, without changing measurement labels.
+function batchLabelUpdates(update) {
+  const show = viewer.show;
+  viewer.show = () => viewer;
+  try { update(); }
+  finally { viewer.show = show; show.call(viewer); }
+}
 function refreshObjectLabels(name) {
-  const o = objects[name];
-  o.objectLabels.forEach(label => viewer.removeLabel(label)); o.objectLabels = [];
-  if (!o.labels || !o.visible) return;
-  const residues = new Set();
-  o.model.selectedAtoms({}).filter(a => componentVisible(o, a)).forEach(a => {
+  const o = objects[name], residues = new Map();
+  if (o.labels && o.visible) o.model.selectedAtoms({}).forEach(a => {
+    if (!componentVisible(o, a)) return;
     const key = JSON.stringify([a.chain, a.resi, a.icode, a.resn]);
-    if (residues.has(key)) return;
-    residues.add(key);
-    o.objectLabels.push(viewer.addLabel(a.resn + a.resi + ":" + a.chain,
-      {position: a, fontSize: 11, backgroundOpacity: 0.5}));
+    if (!residues.has(key)) residues.set(key, a);
   });
+  // Representation and colour changes do not move residue labels.
+  const keys = JSON.stringify(Array.from(residues.keys()));
+  if (o.labelKeys === keys) return;
+  batchLabelUpdates(() => {
+    o.objectLabels.forEach(label => viewer.removeLabel(label));
+    o.objectLabels = [];
+    residues.forEach(a => o.objectLabels.push(viewer.addLabel(a.resn + a.resi + ":" + a.chain,
+      {position: a, fontSize: 11, backgroundOpacity: 0.5}, undefined, true)));
+  });
+  o.labelKeys = keys;
 }
 function setObjectLabels(name, on) {
   if (!objects[name]) return; objects[name].labels = on;
@@ -191,7 +204,7 @@ function focusSelection() {
       if (componentVisible(o, a) && visualSelection[name].has(a.index)) atoms.push(a);
     });
   });
-  if (atoms.length) { viewer.zoomTo({predicate: a => atoms.includes(a)}); viewer.render(); }
+  if (atoms.length) { const chosen = new Set(atoms); viewer.zoomTo({predicate: a => chosen.has(a)}); viewer.render(); }
 }
 
 // -------- residues within a cutoff of a ligand

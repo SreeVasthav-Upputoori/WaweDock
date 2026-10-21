@@ -503,3 +503,59 @@ def test_delete_everything_can_be_undone_and_reopened(qapp, settings, tmp_path):
         assert not atom_records(gemmi.read_structure(str(c.source_pdb)))
     finally:
         w.close()
+
+
+def test_label_updates_batch_draws_and_reuse_unchanged_labels(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    result = json.loads(js(w.viewer, """JSON.stringify((() => {
+      const original = viewer.show;
+      let draws = 0;
+      viewer.show = function(...args) { draws++; return original.apply(this,args); };
+      try {
+        let start = performance.now();
+        setObjectLabels('3PTB', true);
+        const enableMs = performance.now()-start, enableDraws = draws;
+        const labels = objects['3PTB'].objectLabels.slice();
+        draws = 0;
+        refreshObjectLabels('3PTB');
+        const refreshDraws = draws;
+        setRepresentation('3PTB', 'ribbon');
+        const reused = labels.every((label,i) => label === objects['3PTB'].objectLabels[i]);
+        draws = 0; start = performance.now();
+        setObjectLabels('3PTB', false);
+        return {count:labels.length,enableDraws,refreshDraws,reused,
+          disableDraws:draws,remaining:viewer.labels.length,
+          enableMs,disableMs:performance.now()-start};
+      } finally { viewer.show = original; }
+    })())"""))
+    print("Label update profile:", result)
+    assert result['count'] > 100
+    assert result['enableDraws'] <= 3
+    assert result['disableDraws'] <= 3
+    assert result['refreshDraws'] == 0
+    assert result['reused']
+    assert result['remaining'] == 0
+
+
+def test_large_selection_roundtrip_and_legacy_residue_matching(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    assert js(w.viewer, """(() => {
+      const atoms = editableAtoms('3PTB');
+      const detail = atoms.map(a => a._wdIdentity);
+      setSelectionFromPython({'3PTB': detail});
+      const complete = selection['3PTB'].size === atoms.length;
+      clearSelection();
+      const residue = atoms[0]._wdIdentity;
+      setSelectionFromPython({'3PTB': [{chain:residue.chain,resi:atoms[0].resi,icode:residue.icode}]});
+      const expected = atoms.filter(a => a.chain === residue.chain && a.resi === atoms[0].resi &&
+        a._wdIdentity.icode === residue.icode);
+      const exact = selection['3PTB'].size === expected.length &&
+        expected.every(a => selection['3PTB'].has(a._wdIdentity.atom_index));
+      focusSelection();
+      clearSelection();
+      return complete && exact && !Object.keys(selection).length;
+    })()""")
