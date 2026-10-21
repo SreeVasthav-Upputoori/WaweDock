@@ -66,6 +66,9 @@ class SelectionPanel(QWidget):
         for label, mode in (("Residues", "residue"), ("Atoms", "atom"),
                             ("Chains", "chain"), ("Components (ligand / protein chain)", "component")):
             self.mode.addItem(label, mode)
+        self.mode.setToolTip(
+            "Atoms: select atom centres inside the lasso. Residues / Chains: expand "
+            "each hit to its whole residue / chain. The lasso selects through depth.")
         self.mode.currentIndexChanged.connect(
             lambda _: self.c.selection_mode_requested.emit(self.mode.currentData()))
         layout.addWidget(QLabel("Lasso / expansion mode:"))

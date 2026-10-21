@@ -266,9 +266,14 @@ function selectWithinRadius(radius) {
 // Freehand screen polygon, selecting through the visible structure's depth.
 // modelToScreen in the bundled 3Dmol returns PAGE coordinates (including canvas offset).
 function pointInPolygon(point, polygon) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || polygon.length < 3) return false;
   let inside = false;
   for (let i=0, j=polygon.length-1; i<polygon.length; j=i++) {
     const a=polygon[i], b=polygon[j];
+    // Include the exact boundary, with only a hundredth of a CSS pixel tolerance.
+    const dx=b.x-a.x, dy=b.y-a.y, length2=dx*dx+dy*dy;
+    const t=length2 ? Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/length2)) : 0;
+    if (Math.hypot(point.x-a.x-t*dx,point.y-a.y-t*dy) <= 0.01) return true;
     if ((a.y > point.y) !== (b.y > point.y) &&
         point.x < (b.x-a.x)*(point.y-a.y)/(b.y-a.y)+a.x) inside = !inside;
   }
@@ -279,15 +284,32 @@ function finishLasso(cancel) {
   const active = lasso; lasso = null;
   active.svg.remove(); suppressPickUntil = Date.now()+200;
   if (cancel || active.points.length < 3) return;
+  const bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
+  active.points.forEach(p => {
+    bounds.left=Math.min(bounds.left,p.x); bounds.right=Math.max(bounds.right,p.x);
+    bounds.top=Math.min(bounds.top,p.y); bounds.bottom=Math.max(bounds.bottom,p.y);
+  });
+  // A stationary click or a straight drag is not a closed selection region.
+  const origin=active.points[0], end=active.points.find(p=>Math.hypot(p.x-origin.x,p.y-origin.y)>0.5);
+  if (!end || !active.points.some(p=>Math.abs((end.x-origin.x)*(p.y-origin.y)-
+      (end.y-origin.y)*(p.x-origin.x)) > 0.25)) return;
+  const canvas=viewer.getCanvas().getBoundingClientRect();
   if (!active.additive) {
     Object.keys(selection).forEach(name => delete selection[name]);
     Object.keys(visualSelection).forEach(name => delete visualSelection[name]);
   }
   Object.keys(objects).forEach(name => {
     const atoms = editableAtoms(name), hits = new Set(), groups = atomGroups(atoms);
-    atoms.forEach(a => {
-      const p = viewer.modelToScreen(a);
-      if (p && pointInPolygon(p, active.points)) {
+    // Project once as a batch, in the same page/CSS coordinates as the outline.
+    const projected = viewer.modelToScreen(atoms);
+    atoms.forEach((a,i) => {
+      const p = projected[i];
+      const styled = objects[name].rep === "surface" ||
+        Object.values(a.style || {}).some(style => !style.hidden && style.opacity !== 0);
+      if (styled && p && p.x >= canvas.left+window.scrollX && p.x <= canvas.right+window.scrollX &&
+          p.y >= canvas.top+window.scrollY && p.y <= canvas.bottom+window.scrollY &&
+          p.x >= bounds.left && p.x <= bounds.right && p.y >= bounds.top && p.y <= bounds.bottom &&
+          pointInPolygon(p, active.points)) {
         // Group only once per residue/chain even when many atoms fall in the polygon.
         const key = groupKey(a);
         if (hits.has(key)) return;
@@ -310,19 +332,34 @@ container.addEventListener("mousedown", e => {
   svg.appendChild(polygon); document.body.appendChild(svg);
   lasso = {svg, polygon, points: [{x:e.pageX,y:e.pageY}], additive:e.shiftKey || e.ctrlKey || e.metaKey};
 }, true);
+function appendLassoPoint(event, final = false) {
+  const last=lasso.points[lasso.points.length-1], point={x:event.pageX,y:event.pageY};
+  if (Math.hypot(point.x-last.x,point.y-last.y) < (final ? 0.001 : 0.5)) return;
+  lasso.points.push(point);
+}
+let lassoFrame = null;
+function drawLasso() {
+  lassoFrame = null;
+  if (lasso) lasso.polygon.setAttribute("points", lasso.points.map(p =>
+    (p.x-window.scrollX)+","+(p.y-window.scrollY)).join(" "));
+}
 document.addEventListener("mousemove", e => {
   if (!lasso) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  const last = lasso.points[lasso.points.length-1];
-  if (Math.hypot(e.pageX-last.x,e.pageY-last.y) < 2) return;
-  lasso.points.push({x:e.pageX,y:e.pageY});
-  lasso.polygon.setAttribute("points", lasso.points.map(p =>
-    (p.x-window.scrollX)+","+(p.y-window.scrollY)).join(" "));
+  appendLassoPoint(e);
+  if (lassoFrame === null) lassoFrame = requestAnimationFrame(drawLasso);
 }, true);
+
 document.addEventListener("mouseup", e => {
-  if (!lasso) return;
-  e.preventDefault(); e.stopImmediatePropagation(); finishLasso(false);
+  if (!lasso || e.button !== 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  appendLassoPoint(e, true);
+  finishLasso(false);
 }, true);
+container.addEventListener("wheel", e => {
+  if (lasso) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, {capture:true, passive:false});
+window.addEventListener("resize", () => finishLasso(true));
 window.addEventListener("blur", () => finishLasso(true));
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { finishLasso(true); clearSelection(); }

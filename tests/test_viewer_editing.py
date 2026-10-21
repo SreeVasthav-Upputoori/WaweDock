@@ -381,7 +381,7 @@ def test_mouse_pick_freehand_lasso_and_radius(live_window, tmp_path):
       const points = [[p.x-8,p.y-10],[p.x+12,p.y-10],[p.x+9,p.y+10],[p.x-12,p.y+8]];
       container.dispatchEvent(new MouseEvent('mousedown', {clientX:points[0][0],clientY:points[0][1],altKey:true,button:0,bubbles:true}));
       points.slice(1).forEach(q => document.dispatchEvent(new MouseEvent('mousemove', {clientX:q[0],clientY:q[1],altKey:true,bubbles:true})));
-      document.dispatchEvent(new MouseEvent('mouseup', {altKey:true,button:0,bubbles:true}));
+      document.dispatchEvent(new MouseEvent('mouseup', {clientX:points[3][0],clientY:points[3][1],altKey:true,button:0,bubbles:true}));
       return pointInPolygon(p, points.map(q=>({x:q[0],y:q[1]})));
     })()""")
     assert wait_until(lambda: len(c.selection.get("points", [])) == 1)
@@ -590,3 +590,45 @@ def test_empty_space_click_clears_selection_but_drag_preserves_it(live_window):
     QTest.mouseClick(target, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(5,5))
     assert wait_until(lambda: js(w.viewer, 'visualSelectionCount()') == 0)
     assert js(w.viewer, 'selectionStyles.length') == 0
+
+
+def test_lasso_boundary_concavity_and_invalid_points(live_window):
+    assert js(live_window.viewer, """(() => {
+      const square=[{x:0,y:0},{x:10,y:0},{x:10,y:10},{x:0,y:10}];
+      const concave=[{x:0,y:0},{x:10,y:0},{x:10,y:3},{x:3,y:3},{x:3,y:10},{x:0,y:10}];
+      return [{x:0,y:5},{x:10,y:5},{x:5,y:0},{x:5,y:10},{x:0,y:0}]
+        .every(p=>pointInPolygon(p,square)) &&
+        !pointInPolygon({x:10.1,y:5},square) &&
+        !pointInPolygon({x:NaN,y:5},square) &&
+        !pointInPolygon({x:5,y:5},concave) && pointInPolygon({x:2,y:8},concave);
+    })()""")
+
+
+def test_lasso_release_position_zoom_and_hidden_atoms(live_window, tmp_path):
+    w = live_window
+    pdb = tmp_path / 'precise.pdb'
+    pdb.write_text(
+        "HETATM    1 ZN    ZN A   1       0.000   0.000   0.000  1.00 20.00          ZN  \n"
+        "HETATM    2 ZN    ZN A   2      15.000   0.000   0.000  1.00 20.00          ZN  \nEND\n")
+    w.controller.load_structure(pdb)
+    assert wait_until(lambda: bool(js(w.viewer, "objects.precise && objects.precise.editable")), 10)
+    js(w.viewer, "setSelectionMode('atom'); setRepresentation('precise','spheres'); true")
+    for zoom in (1, 1.25):
+        w.viewer.setZoomFactor(zoom)
+        assert wait_until(lambda: bool(js(w.viewer, "viewer.WIDTH === container.clientWidth")), 10)
+        # The last corner arrives only on mouse release, not mousemove.
+        script = """(() => {
+          clearSelection();
+          const atom=objects.precise.model.selectedAtoms({})[0], p=viewer.modelToScreen(atom);
+          const points=[[p.x-10,p.y-30],[p.x+30,p.y-30],[p.x+30,p.y+10],[p.x-10,p.y+10]];
+          container.dispatchEvent(new MouseEvent('mousedown',{clientX:points[0][0],clientY:points[0][1],altKey:true,button:0,bubbles:true}));
+          points.slice(1,3).forEach(q=>document.dispatchEvent(new MouseEvent('mousemove',{clientX:q[0],clientY:q[1],altKey:true,bubbles:true})));
+          const q=points[3];
+          document.dispatchEvent(new MouseEvent('mouseup',{clientX:q[0],clientY:q[1],altKey:true,button:0,bubbles:true}));
+          return selection.precise ? Array.from(selection.precise) : [];
+        })()"""
+        assert json.loads(js(w.viewer, "JSON.stringify(" + script + ")")) == [0]
+        assert wait_until(lambda: len(w.controller.selection.get('precise', [])) == 1)
+        js(w.viewer, "clearSelection(); objects.precise.model.setStyle({},{}); viewer.render(); true")
+        assert json.loads(js(w.viewer, "JSON.stringify(" + script + ")")) == []
+        js(w.viewer, "setRepresentation('precise','spheres'); true")
