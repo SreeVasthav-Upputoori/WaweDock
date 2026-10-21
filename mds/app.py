@@ -10,7 +10,7 @@ for _name in ("stdout", "stderr"):
     if getattr(sys, _name) is None:
         setattr(sys, _name, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
 
-from PySide6.QtCore import QCoreApplication, QSettings, Qt
+from PySide6.QtCore import QCoreApplication, QSettings, QTimer, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QSplashScreen
 
@@ -54,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(QSettings(), log_dir=log_dir)
     window.show()
     splash.finish(window)
+    if args:
+        from pathlib import Path
+        QTimer.singleShot(0, lambda: window.open_files([Path(arg) for arg in args]))
     return app.exec()
 
 

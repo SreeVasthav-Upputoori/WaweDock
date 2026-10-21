@@ -15,6 +15,18 @@ cd "D:\Tools\Docking tool"
 python -m mds
 ```
 
+To add WaweDock to Windows **Open with** for PDB/mmCIF and molecular ligand
+files, run once from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe tools/register_open_with.py
+```
+
+Right-click a supported file and choose **Open with > WaweDock** (it may first
+appear under **Choose another app**). Existing default apps stay unchanged.
+You can also launch directly with `python -m mds "C:\path\protein.pdb"`.
+Rerun registration if you move this folder or recreate the virtual environment.
+
 ## Workspace controls
 
 The molecular viewer occupies the main workspace, with a compact Project Explorer

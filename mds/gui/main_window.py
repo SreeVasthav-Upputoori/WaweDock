@@ -859,12 +859,21 @@ class MainWindow(QMainWindow):
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         event.acceptProposedAction() if self._paths(event) else event.ignore()
 
-    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
-        for p in self._paths(event):
-            if p.suffix.lower() in STRUCTURE_SUFFIXES:
+    def open_files(self, paths: list[Path]) -> None:
+        """Open files from Explorer, command-line arguments, or drag and drop."""
+        for p in paths:
+            p = Path(p)
+            if not p.is_file():
+                self.controller.error.emit("Cannot open file", f"File not found: {p}")
+            elif p.suffix.lower() in STRUCTURE_SUFFIXES:
                 self.controller.load_structure(p)
-            else:
+            elif p.suffix.lower() in LIGAND_SUFFIXES:
                 self.controller.import_ligand_file(p)
+            else:
+                self.controller.error.emit("Cannot open file", f"Unsupported file type: {p.suffix}")
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
+        self.open_files(self._paths(event))
         event.acceptProposedAction()
 
     # ============================================================ close
