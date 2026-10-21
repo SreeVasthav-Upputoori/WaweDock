@@ -47,7 +47,7 @@ function applyStyle(name) {
   switch (o.rep) {
     case "cartoon": s.cartoon = Object.assign({}, c, {style: "rectangle"}); break;
     case "ribbon": s.cartoon = Object.assign({}, c, {style: "trace", thickness: 0.4}); break;
-    case "backbone": s.line = Object.assign({}, c); break;
+    case "backbone": break; // Only backbone atoms are styled below.
     case "sticks": s.stick = Object.assign({radius: 0.18}, c); break;
     case "ball-and-stick": s.stick = Object.assign({radius: 0.12}, c); s.sphere = Object.assign({scale: 0.25}, c); break;
     case "lines": s.line = Object.assign({}, c); break;
@@ -58,10 +58,9 @@ function applyStyle(name) {
   if (o.rep === "backbone") o.model.setStyle({atom: ["CA", "C", "N", "O"]},
     {stick: Object.assign({radius: 0.2}, c)}, true);
   if (o.kind === "protein") {
-    // Keep every imported atom visible, including waters and alternate locations.
-    if (["cartoon", "ribbon", "surface", "backbone"].includes(o.rep))
-      o.model.setStyle({hetflag: false}, {line: {colorscheme: "Jmol"},
-        sphere: {scale: 0.12, colorscheme: "Jmol"}}, true);
+    // Keep non-protein components visible without covering the chosen protein
+    // representation with an all-atom overlay. Imported atoms remain available
+    // for selection and editing even when this representation does not draw them.
     o.model.setStyle({resn: WATERS}, {sphere: {scale: 0.22, colorscheme: "Jmol"}});
     o.model.setStyle({hetflag: true, not: {resn: WATERS}},
       {stick: {radius: 0.18, colorscheme: "Jmol"}, sphere: {scale: 0.25, colorscheme: "Jmol"}});

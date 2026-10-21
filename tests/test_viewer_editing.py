@@ -33,6 +33,37 @@ def live_window(qapp, settings, tmp_path):
     window.close()
 
 
+def test_protein_styles_do_not_keep_all_atom_overlay(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    name = w.controller.source_pdb.stem
+    key = json.dumps(name)
+    assert wait_until(lambda: bool(js(w.viewer, f"objects[{key}] && objects[{key}].editable")), 10)
+    panel = w.appearance
+    panel.object_combo.setCurrentIndex(panel.object_combo.findData(name))
+    for rep in ("ribbon", "backbone", "cartoon", "ribbon"):
+        panel.protein_group.buttons[rep].click()
+        styles = json.loads(js(w.viewer, f"""JSON.stringify((() => {{
+            const m = objects[{key}].model;
+            return {{rep: objects[{key}].rep,
+                ca: m.selectedAtoms({{hetflag: false, atom: 'CA'}})[0].style,
+                side: m.selectedAtoms({{hetflag: false, atom: 'CB'}})[0].style,
+                water: m.selectedAtoms({{resn: 'HOH'}})[0].style,
+                ligand: m.selectedAtoms({{resn: 'BEN'}})[0].style}};
+        }})())"""))
+        assert styles["rep"] == rep
+        assert "line" not in styles["side"]
+        assert "sphere" not in styles["side"]
+        if rep == "backbone":
+            assert "stick" in styles["ca"]
+            assert "stick" not in styles["side"]
+        else:
+            assert "cartoon" in styles["ca"]
+            assert styles["ca"]["cartoon"]["style"] == ("trace" if rep == "ribbon" else "rectangle")
+        assert "sphere" in styles["water"]
+        assert "stick" in styles["ligand"]
+
+
 def test_real_viewer_atom_identity_delete_and_undo(live_window):
     w = live_window
     c = w.controller
