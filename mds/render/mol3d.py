@@ -13,10 +13,12 @@ import json
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QUrl, Signal
+from PySide6.QtCore import QPoint, QTimer, QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QWidget
+
+from mds.render.context_menu import build_context_menu
 
 from mds.core.paths import assets_dir
 
@@ -43,9 +45,11 @@ class Mol3DViewer(QWebEngineView):
     selection_changed = Signal(dict, str)       # detail {object: [{chain, resi}, …]}, summary
     ready = Signal()
     edit_requested = Signal(str)
+    visibility_changed = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._context_menu = None
         self._ready = False
         self._queue: list[str] = []
         self._page = _Page(self)
@@ -77,13 +81,18 @@ class Mol3DViewer(QWebEngineView):
         elif kind == "edit" and data in ("delete", "undo", "redo"):
             self.edit_requested.emit(str(data))
         elif kind == "context" and isinstance(data, dict):
-            menu = QMenu(self)
-            menu.addAction("Delete selected atoms", lambda: self.edit_requested.emit("delete"))
-            menu.addAction("Clear selection", self.clear_selection)
-            menu.addSeparator()
-            menu.addAction("Undo structure edit", lambda: self.edit_requested.emit("undo"))
-            menu.addAction("Redo structure edit", lambda: self.edit_requested.emit("redo"))
-            menu.exec(self.mapToGlobal(QPoint(int(data.get("x", 0)), int(data.get("y", 0)))))
+            # Leave the Chromium console callback before opening native UI.
+            # A nested menu.exec() here can block the JavaScript bridge.
+            QTimer.singleShot(0, lambda state=dict(data): self._show_context_menu(state))
+
+    def _show_context_menu(self, state: dict) -> None:
+        if self._context_menu is not None:
+            self._context_menu.close()
+        menu = build_context_menu(self, state)
+        self._context_menu = menu
+        menu.aboutToHide.connect(lambda: setattr(self, "_context_menu", None))
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.popup(self.mapToGlobal(QPoint(int(state.get("x", 0)), int(state.get("y", 0)))))
 
     def _call(self, fn: str, *args: object) -> None:
         js = f"{fn}({', '.join(json.dumps(a) for a in args)});"
@@ -102,6 +111,7 @@ class Mol3DViewer(QWebEngineView):
 
     def set_visible(self, name: str, visible: bool) -> None:
         self._call("setVisible", name, visible)
+        self.visibility_changed.emit(name, visible)
 
     def set_representation(self, name: str, representation: str) -> None:
         self._call("setRepresentation", name, representation)

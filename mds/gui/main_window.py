@@ -347,6 +347,7 @@ class MainWindow(QMainWindow):
         c.selection_cleared.connect(lambda: self._viewer_call("clear_selection"))
         self.results_panel.pose_selected.connect(self._show_pose)
         if self.viewer is not None:
+            self.viewer.visibility_changed.connect(ex.set_visible)
             self.viewer.atom_info.connect(self.status.set_selection)
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)

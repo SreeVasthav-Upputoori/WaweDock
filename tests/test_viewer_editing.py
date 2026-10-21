@@ -62,6 +62,91 @@ def test_protein_styles_do_not_keep_all_atom_overlay(live_window):
         assert "stick" in styles["ligand"]
 
 
+def test_context_hit_testing_and_molecular_controls(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    def run(code):
+        return js(w.viewer, code)
+
+    # Use real rendered spheres to exercise the bundled raycaster.
+    run("setRepresentation('3PTB', 'spheres'); zoomTo('3PTB'); true")
+    payload = json.loads(run("""JSON.stringify((() => {
+      const a = objects['3PTB'].model.selectedAtoms({hetflag:false, atom:'CA'})[0];
+      const p = viewer.modelToScreen(a);
+      return contextPayload({pageX:p.x,pageY:p.y,clientX:p.x,clientY:p.y});
+    })())"""))
+    assert payload["name"] == "3PTB"
+    assert payload["editable"]
+    assert payload["atomIndex"] is not None
+    assert payload["selectionCount"] == 0  # Right-click never changes selection.
+    assert run("contextPayload({pageX:-10000,pageY:-10000,clientX:0,clientY:0}).name === null")
+    run(f"selectContextTarget('3PTB', {payload['atomIndex']}, 'atom'); true")
+    assert wait_until(lambda: len(w.controller.selection.get('3PTB', [])) == 1)
+
+    count = run("objects['3PTB'].model.selectedAtoms({}).length")
+    run("setComponentVisible('3PTB','waters',false); setCustomColor('3PTB','#123456'); true")
+    assert run("objects['3PTB'].model.selectedAtoms({resn:'HOH'}).every(a => !Object.keys(a.style).length)")
+    assert run("objects['3PTB'].model.selectedAtoms({hetflag:false,atom:'CA'})[0].style.sphere.color") == '#123456'
+    run("setRepresentation('3PTB','sticks'); true")
+    assert run("objects['3PTB'].model.selectedAtoms({resn:'HOH'}).every(a => !Object.keys(a.style).length)")
+    run("setComponentVisible('3PTB','waters',true); setComponentVisible('3PTB','ligands',false); true")
+    assert run("objects['3PTB'].model.selectedAtoms({resn:'BEN'}).every(a => !Object.keys(a.style).length)")
+    assert run("objects['3PTB'].model.selectedAtoms({resn:'HOH'}).every(a => !!a.style.sphere)")
+    assert run("objects['3PTB'].model.selectedAtoms({}).length") == count
+    run("setColorScheme('3PTB','residue'); setObjectLabels('3PTB',true); true")
+    assert run("objects['3PTB'].customColor === null")
+    assert run("objects['3PTB'].objectLabels.length > 0")
+    run("labelResidues(false); true")
+    assert run("objects['3PTB'].objectLabels.length") == 0
+    run("labelResidues(true); true")
+    assert run("objects['3PTB'].labels")
+    w.viewer.set_visible('3PTB', False)
+    assert not w.project_explorer.is_visible('3PTB')
+    assert run("objects['3PTB'].objectLabels.length") == 0
+    w.viewer.set_visible('3PTB', True)
+    assert w.project_explorer.is_visible('3PTB')
+    run("setObjectLabels('3PTB',false); setBackgroundColor('#123456'); true")
+    assert run("backgroundColor") == '#123456'
+
+
+def test_surface_switching_uses_numeric_surface_ids(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    assert js(w.viewer, "setRepresentation('3PTB','surface'); typeof objects['3PTB'].surf") == 'number'
+    assert js(w.viewer, "setColorScheme('3PTB','residue'); typeof objects['3PTB'].surf") == 'number'
+    assert js(w.viewer, "setRepresentation('3PTB','cartoon'); objects['3PTB'].surf === undefined")
+    assert js(w.viewer, "Object.keys(viewer.surfaces).length") == 0
+
+
+def test_context_event_opens_native_menu_and_hydrogens_stay_hidden(live_window, monkeypatch):
+    from PySide6.QtWidgets import QMenu
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    opened = []
+    monkeypatch.setattr(QMenu, "popup", lambda menu, point: opened.append(
+        [action.text() for action in menu.actions()]))
+    js(w.viewer, "container.dispatchEvent(new MouseEvent('contextmenu', {clientX:0,clientY:0,bubbles:true})); true")
+    assert wait_until(lambda: bool(opened))
+    assert "Background Settings" in opened[0]
+    # A separate small molecule ensures the H toggle exercises actual hydrogens.
+    pdb = (
+        "HETATM    1  C1  LIG B   1       0.000   0.000   0.000  1.00 20.00           C  \n"
+        "HETATM    2  H1  LIG B   1       1.000   0.000   0.000  1.00 20.00           H  \nEND\n"
+    )
+    w.viewer.add_object('hydrogen-test', pdb, 'pdb', 'ligand')
+    assert js(w.viewer, "objects['hydrogen-test'].model.selectedAtoms({elem:'H'}).length") == 1
+    assert js(w.viewer, """(() => {
+      setComponentVisible('hydrogen-test','hydrogens',false);
+      setRepresentation('hydrogen-test','ball-and-stick');
+      const m = objects['hydrogen-test'].model;
+      return m.selectedAtoms({elem:'H'}).every(a=>!Object.keys(a.style).length)
+        && m.selectedAtoms({elem:'C'}).every(a=>!!a.style.stick);
+    })()""")
+
+
 def test_real_viewer_atom_identity_delete_and_undo(live_window):
     w = live_window
     c = w.controller

@@ -23,9 +23,20 @@ detached by dragging their title bars. Reopen panels through **Window > Panels**
 Results, Preparation Report, Properties, Selection & Cleanup, Log and Jobs are
 available on demand. **Window > Reset Layout** restores this arrangement.
 
-Change a structure's representation or colour through its right-click menu in
-Project Explorer. The permanent Appearance sidebar has been removed. Preparation,
-measurements and image export remain available in the top-level menus.
+Right-click a molecule directly in the viewer for representation, colour, labels,
+hydrogen/water/ligand visibility and molecular operations. These controls apply to
+the clicked structure immediately. Custom molecular and background colours use a
+colour picker. Right-click empty space for background settings, camera reset and
+**Show / Hide Structures**, which can restore a hidden molecule. Project Explorer
+also retains its representation and colour menus. There is no Appearance sidebar.
+Preparation, measurements and image export remain in the top-level menus.
+
+Right-clicking preserves the current selection. **Select Clicked…** selects the
+clicked atom, residue, chain or component; Shift/Ctrl-click and Alt-drag lasso still
+work as before. **Delete Selected Atoms / Residues** edits the imported structure
+and supports Undo/Redo. Prepared receptors and docking poses remain read-only.
+Hydrogen, water and ligand visibility switches only change the view; they do not
+remove atoms from the project or change docking inputs.
 
 Use **View > Full Screen** for a molecular viewing mode with panels and toolbars
 hidden. Press **Escape** to restore the previous layout and window state.
@@ -35,7 +46,7 @@ once; project files and molecular data are unaffected.
 The redesign is being delivered in separate steps: (1) main workspace and layout,
 (2) molecular viewer context menus, (3) docking workflow, (4) Results & Analysis
 workspace, and (5) visual design consistency. Each step is committed and pushed
-individually. The current implementation completes step 1.
+individually. The current implementation completes steps 1 and 2.
 
 ## Typical workflow
 

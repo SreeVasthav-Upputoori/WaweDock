@@ -42,7 +42,7 @@ function colorSpec(o) {
 
 function applyStyle(name) {
   const o = objects[name]; if (!o) return;
-  const c = colorSpec(o);
+  const c = o.customColor ? {color: o.customColor} : colorSpec(o);
   const s = {};
   switch (o.rep) {
     case "cartoon": s.cartoon = Object.assign({}, c, {style: "rectangle"}); break;
@@ -52,7 +52,8 @@ function applyStyle(name) {
     case "ball-and-stick": s.stick = Object.assign({radius: 0.12}, c); s.sphere = Object.assign({scale: 0.25}, c); break;
     case "lines": s.line = Object.assign({}, c); break;
     case "spheres": s.sphere = Object.assign({}, c); break;
-    case "surface": s.cartoon = Object.assign({}, c, {style: "rectangle", opacity: 0.6}); break;
+    // Transparent VDW spheres provide atom-level picking for the surface mesh.
+    case "surface": s.sphere = Object.assign({}, c, {opacity: 0}); break;
   }
   o.model.setStyle({}, s);
   if (o.rep === "backbone") o.model.setStyle({atom: ["CA", "C", "N", "O"]},
@@ -73,10 +74,20 @@ function finish(name) {
   const o = objects[name];
   if (o.surf !== undefined) { viewer.removeSurface(o.surf); o.surf = undefined; }
   if (o.rep === "surface" && o.visible) {
-    o.surf = viewer.addSurface($3Dmol.SurfaceType.VDW, {opacity: 0.75, color: "white"}, {model: o.model.getID()});
+    const indices = o.model.selectedAtoms({}).filter(a => componentVisible(o, a)).map(a => a.index);
+    const surface = viewer.addSurface($3Dmol.SurfaceType.VDW,
+      Object.assign({opacity: 0.75}, o.customColor ? {color: o.customColor} : colorSpec(o)),
+      {model: o.model.getID(), index: indices});
+    // This 3Dmol build returns a Promise carrying the numeric surface ID.
+    // removeSurface needs that ID, not the Promise itself.
+    o.surf = surface.surfid === undefined ? surface : surface.surfid;
+    if (surface.catch) surface.catch(error => emit("jserror", String(error)));
   }
   applyVisibility(name);
   reapplyAround();
+  Object.values(objects).forEach(applyComponentVisibility);
+  refreshObjectLabels(name);
+  reapplySelectionHighlights();
   viewer.render();
 }
 
@@ -94,7 +105,8 @@ function addObject(name, data, fmt, kind, identities, preserveView) {
   const carbon = kind === "protein" ? "#9aa5b1" : CARBON[objectCount++ % CARBON.length];
   const rep = kind === "protein" ? "cartoon" : "sticks";
   objects[name] = {model: model, kind: kind, rep: rep, color: kind === "protein" ? "chain" : "element",
-                   visible: true, carbon: carbon, surf: undefined, editable: false};
+                   visible: true, carbon: carbon, surf: undefined, editable: false,
+                   components: {hydrogens: true, waters: true, ligands: true}, labels: labelsOn, objectLabels: []};
   bindAtomIdentities(name, identities);
   model.setClickable({}, true, function(atom, view, event) {
     onPick(atom);
@@ -107,15 +119,61 @@ function addObject(name, data, fmt, kind, identities, preserveView) {
 function removeObject(name) {
   const o = objects[name]; if (!o) return;
   if (o.surf !== undefined) viewer.removeSurface(o.surf);
+  o.objectLabels.forEach(label => viewer.removeLabel(label));
   viewer.removeModel(o.model); delete objects[name];
   if (selection[name]) { delete selection[name]; if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); if (typeof emitSelection === "function") emitSelection(); }
   viewer.render();
 }
-function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); viewer.render(); } if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
+function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); refreshObjectLabels(name); viewer.render(); } if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
 function setRepresentation(name, rep) { const o = objects[name]; if (!o) return; o.rep = rep; applyStyle(name); }
-function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.color = c; applyStyle(name); }
+function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.color = c; o.customColor = null; applyStyle(name); }
 function zoomTo(name) { if (name && objects[name]) viewer.zoomTo({model: objects[name].model.getID()}); else viewer.zoomTo(); viewer.render(); }
-function setBackground(dark) { viewer.setBackgroundColor(dark ? "#1b1d21" : "#ffffff"); viewer.render(); }
+let backgroundColor = "#ffffff";
+function setBackground(dark) { setBackgroundColor(dark ? "#1b1d21" : "#ffffff"); }
+function setBackgroundColor(color) { backgroundColor = color; viewer.setBackgroundColor(color); viewer.render(); }
+function setCustomColor(name, color) {
+  const o = objects[name]; if (!o) return;
+  o.customColor = color; applyStyle(name);
+}
+function componentVisible(o, a) {
+  if (!o.visible) return false;
+  if (!o.components.hydrogens && ["H", "D"].includes(a.elem)) return false;
+  if (!o.components.waters && WATERS.includes(a.resn)) return false;
+  if (!o.components.ligands && a.hetflag && !WATERS.includes(a.resn) && !METALS.includes(a.elem)) return false;
+  return true;
+}
+function applyComponentVisibility(o) {
+  const hidden = o.model.selectedAtoms({}).filter(a => !componentVisible(o, a)).map(a => a.index);
+  if (hidden.length) o.model.setStyle({index: hidden}, {});
+}
+function setComponentVisible(name, component, visible) {
+  const o = objects[name]; if (!o || !(component in o.components)) return;
+  o.components[component] = visible; applyStyle(name); emitSelection();
+}
+function refreshObjectLabels(name) {
+  const o = objects[name];
+  o.objectLabels.forEach(label => viewer.removeLabel(label)); o.objectLabels = [];
+  if (!o.labels || !o.visible) return;
+  const residues = new Set();
+  o.model.selectedAtoms({}).filter(a => componentVisible(o, a)).forEach(a => {
+    const key = JSON.stringify([a.chain, a.resi, a.icode, a.resn]);
+    if (residues.has(key)) return;
+    residues.add(key);
+    o.objectLabels.push(viewer.addLabel(a.resn + a.resi + ":" + a.chain,
+      {position: a, fontSize: 11, backgroundOpacity: 0.5}));
+  });
+}
+function setObjectLabels(name, on) {
+  if (!objects[name]) return; objects[name].labels = on;
+  refreshObjectLabels(name); viewer.render();
+}
+function focusSelection() {
+  const atoms = [];
+  Object.keys(selection).forEach(name => editableAtoms(name).forEach(a => {
+    if (selection[name].has(a._wdIdentity.atom_index)) atoms.push(a);
+  }));
+  if (atoms.length) { viewer.zoomTo({predicate: a => atoms.includes(a)}); viewer.render(); }
+}
 
 // -------- residues within a cutoff of a ligand
 let around = null;
@@ -143,17 +201,18 @@ function reapplyAround() {
   const res = nearbyResidues(p, l, around.cutoff), byChain = {};
   Object.keys(res).forEach(k => { const [ch, ri] = k.split("|"); (byChain[ch] = byChain[ch] || []).push(parseInt(ri)); });
   Object.keys(byChain).forEach(ch => viewer.addStyle({model: p.model.getID(), chain: ch, resi: byChain[ch]}, {stick: {radius: 0.14, colorscheme: "Jmol"}}));
-  p.model.selectedAtoms({atom: "CA"}).forEach(a => { if (res[a.chain + "|" + a.resi]) residueLabels.push(viewer.addLabel(a.resn + a.resi, {position: a, fontSize: 11, backgroundOpacity: 0.55, fontColor: "white", backgroundColor: "#333"})); });
+  p.model.selectedAtoms({atom: "CA"}).forEach(a => { if (componentVisible(p, a) && res[a.chain + "|" + a.resi]) residueLabels.push(viewer.addLabel(a.resn + a.resi, {position: a, fontSize: 11, backgroundOpacity: 0.55, fontColor: "white", backgroundColor: "#333"})); });
+  applyComponentVisibility(p);
   emit("measure", Object.keys(res).length + " residues within " + around.cutoff + " Å of " + around.ligand);
 }
 function clearAround() { around = null; clearResLabels(); Object.keys(objects).forEach(applyStyle); }
 function clearResLabels() { residueLabels.forEach(l => viewer.removeLabel(l)); residueLabels = []; }
 
 function labelResidues(on) {
-  labelsOn = on; clearResLabels();
-  if (on) Object.keys(objects).forEach(n => { const o = objects[n]; if (o.kind !== "protein" || !o.visible) return;
-    o.model.selectedAtoms({atom: "CA"}).forEach(a => residueLabels.push(viewer.addLabel(a.resn + a.resi, {position: a, fontSize: 10, backgroundOpacity: 0.4, fontColor: "white", backgroundColor: "#444"}))); });
-  viewer.render();
+  labelsOn = on;
+  Object.keys(objects).forEach(name => {
+    if (objects[name].kind === "protein") setObjectLabels(name, on);
+  });
 }
 
 // -------- docking box

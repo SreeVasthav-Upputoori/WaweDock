@@ -24,7 +24,7 @@ function bindAtomIdentities(name, identities) {
 }
 function editableAtoms(name) {
   const o = objects[name];
-  return o && o.editable && o.visible ? o.model.selectedAtoms({}) : [];
+  return o && o.editable && o.visible ? o.model.selectedAtoms({}).filter(a => componentVisible(o, a)) : [];
 }
 function residueKey(a) {
   const r = a._wdIdentity;
@@ -239,6 +239,34 @@ document.addEventListener("keydown", e => {
     e.preventDefault(); emit("edit", "redo");
   }
 });
+// Raycast against the rendered atom geometry rather than choosing the nearest
+// screen coordinate: empty space must not act on a molecule behind the menu.
+function contextPayload(event) {
+  const point = viewer.mouseXY(event.pageX, event.pageY);
+  const candidates = Object.values(objects).flatMap(o => o.model.selectedAtoms({})
+    .filter(a => componentVisible(o, a) && Object.keys(a.style || {}).length));
+  const hits = viewer.targetedObjects(point.x, point.y, candidates);
+  const atom = hits.length ? hits[0].clickable : null;
+  const name = atom && atom._wdObject, o = name && objects[name];
+  let count = 0;
+  Object.keys(selection).forEach(n => { count += editableAtoms(n)
+    .filter(a => selection[n].has(a._wdIdentity.atom_index)).length; });
+  return {x: event.clientX, y: event.clientY, name: name || null,
+    kind: o ? o.kind : null, target: atom ? describe(atom) : null,
+    editable: !!(o && o.editable), atomIndex: atom && atom._wdIdentity ? atom._wdIdentity.atom_index : null,
+    representation: o ? o.rep : null, color: o ? o.color : null,
+    customColor: o ? o.customColor : null, components: o ? o.components : {},
+    labels: !!(o && o.labels), selectionCount: count, background: backgroundColor,
+    objects: Object.keys(objects).map(n => ({name:n, visible:objects[n].visible})),
+    selectionMode: selectionMode};
+}
+function selectContextTarget(name, atomIndex, mode) {
+  const atom = editableAtoms(name).find(a => a._wdIdentity.atom_index === atomIndex);
+  if (!atom) return;
+  const previous = selectionMode; setSelectionMode(mode);
+  pickSelection(name, atom, {}); setSelectionMode(previous);
+}
 container.addEventListener("contextmenu", e => {
-  e.preventDefault(); emit("context", {x:e.clientX,y:e.clientY});
-});
+  e.preventDefault(); e.stopImmediatePropagation();
+  emit("context", contextPayload(e));
+}, true);
