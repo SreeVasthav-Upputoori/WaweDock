@@ -15,17 +15,16 @@ cd "D:\Tools\Docking tool"
 python -m mds
 ```
 
-To add WaweDock to Windows **Open with** for PDB/mmCIF and molecular ligand
-files, run once from the project folder:
-
-```powershell
-.\.venv\Scripts\python.exe tools/register_open_with.py
-```
+On Windows, WaweDock automatically adds itself to **Open with** on first launch,
+for PDB/mmCIF and supported molecular ligand files. This works in the packaged
+app and source/pip installations; it uses the installation's own executable or
+Python environment, with no developer-machine paths. Existing default apps stay
+unchanged. Reopening WaweDock repairs registration after moving its folder.
 
 Right-click a supported file and choose **Open with > WaweDock** (it may first
-appear under **Choose another app**). Existing default apps stay unchanged.
-You can also launch directly with `python -m mds "C:\path\protein.pdb"`.
-Rerun registration if you move this folder or recreate the virtual environment.
+appear under **Choose another app**). You can also launch directly with
+`python -m mds "C:\path\protein.pdb"`. To repair registration manually, run
+`python -m mds --register-file-associations`.
 
 ## Workspace controls
 
@@ -182,6 +181,19 @@ pytest          # preparation, docking, interactions, GUI workflows and backgrou
 pip install pyinstaller
 pyinstaller --noconfirm wavedock.spec     # -> dist\WaweDock\WaweDock.exe (+ _internal\)
 ```
+
+For an installer, install Inno Setup 6 and compile the setup recipe after building
+the executable:
+
+```powershell
+ISCC.exe installer/wavedock.iss          # -> dist/installer/WaweDock-Setup-0.1.0.exe
+```
+
+Setup installs per user, creates desktop/Start menu shortcuts, and registers
+**Open with** during installation. Uninstall removes only this installation's
+registration, preserving other applications and newer WaweDock installations.
+Portable builds register automatically when first opened. No admin rights or
+manual registration script is required by users.
 
 The build bundles AutoDock Vina 1.2.7, the monomer library and the 3D viewer, but deliberately
 **not** Open Babel (see Licensing), so "Interactions (ProLIF)" is unavailable in this build.

@@ -27,6 +27,11 @@ from mds.gui.main_window import MainWindow, app_icon, default_log_dir
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv[1:]
+    if args in (["--register-file-associations"], ["--unregister-file-associations"]):
+        from mds.windows_integration import register, unregister
+        action = unregister if args[0].startswith("--unregister") else register
+        action()
+        return 0
     if args[:1] == ["--validate"]:
         return _validate(args[1:])
     # Give source launches their own Windows taskbar identity instead of Python's.
@@ -45,6 +50,13 @@ def main(argv: list[str] | None = None) -> int:
     log_dir = default_log_dir()
     configure_logging(log_dir)
     install_exception_hook()
+    if sys.platform == "win32":
+        from mds.windows_integration import register
+        try:
+            register()
+        except OSError:
+            import logging
+            logging.getLogger("mds").warning("Windows Open with registration failed", exc_info=True)
 
     splash = QSplashScreen(QPixmap(str(assets_dir() / "wavedock-splash.png")).scaledToWidth(
         280, Qt.TransformationMode.SmoothTransformation))
