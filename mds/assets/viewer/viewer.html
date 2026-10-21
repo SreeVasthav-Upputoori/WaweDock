@@ -67,6 +67,13 @@ function applyStyle(name) {
     o.model.setStyle({resn: WATERS}, {sphere: {scale: 0.22, colorscheme: "Jmol"}});
     o.model.setStyle({hetflag: true, not: {resn: WATERS}},
       {stick: {radius: 0.18, colorscheme: "Jmol"}, sphere: {scale: 0.25, colorscheme: "Jmol"}});
+    if (o.ligandColor) {
+      const ligand = o.ligandColor;
+      const colors = ligand.carbonOnly ? {colorscheme: {prop:"elem", map:Object.assign({},
+        $3Dmol.elementColors.Jmol, {C:ligand.color})}} : {color:ligand.color};
+      o.model.setStyle({predicate:a=>a.hetflag && !WATERS.includes(a.resn) && !METALS.includes(a.elem)},
+        {stick:Object.assign({radius:0.18},colors), sphere:Object.assign({scale:0.25},colors)});
+    }
     o.model.setStyle({hetflag: true, elem: METALS}, {sphere: {scale: 0.35, colorscheme: "Jmol"}});         // metal ions
   }
   finish(name);
@@ -147,6 +154,17 @@ function setBackgroundColor(color) {
 function setCustomColor(name, color) {
   const o = objects[name]; if (!o) return;
   o.customColor = color; applyStyle(name);
+}
+function setLigandColor(name, color, carbonOnly = true) {
+  const o = objects[name]; if (!o) return;
+  if (o.kind === "protein") o.ligandColor = color ? {color,carbonOnly} : null;
+  else {
+    if (!o.originalCarbon) o.originalCarbon = o.carbon;
+    o.carbon = carbonOnly && color ? color : o.originalCarbon;
+    o.color = "element";
+    o.customColor = !carbonOnly && color ? color : null;
+  }
+  applyStyle(name);
 }
 function componentVisible(o, a) {
   if (!o.visible) return false;

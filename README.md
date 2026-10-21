@@ -41,6 +41,12 @@ colour picker. Right-click empty space for background settings, camera reset and
 **Show / Hide Structures**, which can restore a hidden molecule. Project Explorer
 also retains its representation and colour menus. There is no Appearance sidebar.
 Preparation, measurements and image export remain in the top-level menus.
+Ligands and docking poses have **Color Options > Carbon Color** (preserves other
+element colours) and **Solid Ligand Color**, with preset and custom colours plus
+reset. For ligands embedded in a protein, use **Ligand Color Options** to colour
+the bound ligands independently of the protein and waters. Selection remains
+yellow until cleared, then the chosen ligand colours return.
+
 Changing the viewport background (black, white, dark grey or a custom colour)
 does not change the application's interface colours.
 

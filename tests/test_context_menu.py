@@ -115,3 +115,20 @@ def test_color_picker_applies_only_valid_colors(viewer, monkeypatch):
     monkeypatch.setattr("mds.render.context_menu.QColorDialog.getColor", lambda *args: QColor())
     find(menu, "Custom Color…").trigger()
     assert len(viewer.calls) == 2
+
+
+@pytest.mark.parametrize("kind", ["protein", "ligand", "pose"])
+def test_ligand_color_palettes(viewer, kind, monkeypatch):
+    menu = build_context_menu(viewer, state(kind=kind))
+    parent = find(menu, "Ligand Color Options" if kind == "protein" else "Color Options").menu()
+    carbon = find(parent, "Carbon Color").menu()
+    solid = find(parent, "Solid Ligand Color").menu()
+    find(carbon, "Green").trigger()
+    find(solid, "Magenta").trigger()
+    monkeypatch.setattr("mds.render.context_menu.QColorDialog.getColor", lambda *args: QColor("#123456"))
+    next(a for a in carbon.actions() if a.text().startswith("Custom Color")).trigger()
+    find(parent, "Reset Ligand Colors").trigger()
+    assert viewer.calls == [("setLigandColor", "protein", "#33cc66", True),
+                            ("setLigandColor", "protein", "#cc33cc", False),
+                            ("setLigandColor", "protein", "#123456", True),
+                            ("setLigandColor", "protein", None, True)]

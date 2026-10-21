@@ -9,6 +9,9 @@ REPRESENTATIONS = (
     ("Sticks", "sticks"), ("Ball and Stick", "ball-and-stick"),
     ("Spheres", "spheres"), ("Lines", "lines"), ("Molecular Surface", "surface"),
 )
+LIGAND_PALETTE = (("Green", "#33cc66"), ("Cyan", "#00bfff"), ("Blue", "#3366ff"),
+                  ("Orange", "#ff9933"), ("Magenta", "#cc33cc"), ("Yellow", "#ffff00"),
+                  ("White", "#ffffff"), ("Grey", "#999999"))
 COLORS = (("Chain", "chain"), ("Element", "element"), ("Residue", "residue"),
           ("Secondary Structure", "secondary structure"), ("Spectrum", "spectrum"))
 
@@ -35,6 +38,20 @@ def build_context_menu(viewer, state: dict) -> QMenu:
             else:
                 viewer._call("setCustomColor", name, color.name())
 
+    def ligand_colors(parent):
+        for title, carbon_only in (("Carbon Color", True), ("Solid Ligand Color", False)):
+            palette = parent.addMenu(title)
+            for label, value in LIGAND_PALETTE:
+                palette.addAction(label, lambda _on=False, v=value, c=carbon_only:
+                                  viewer._call("setLigandColor", name, v, c))
+            def custom(_on=False, c=carbon_only):
+                color = QColorDialog.getColor(QColor("#33cc66"), viewer,
+                                              "Ligand Carbon Color" if c else "Solid Ligand Color")
+                if color.isValid():
+                    viewer._call("setLigandColor", name, color.name(), c)
+            palette.addAction("Custom Color\u2026", custom)
+        parent.addAction("Reset Ligand Colors", lambda: viewer._call("setLigandColor", name, None, True))
+
     if name:
         menu.addSection(str(state.get("target") or name))
         rep = menu.addMenu("Protein Representation" if state.get("kind") == "protein" else "Molecular Representation")
@@ -56,6 +73,11 @@ def build_context_menu(viewer, state: dict) -> QMenu:
             group.addAction(action)
         colors.addSeparator()
         colors.addAction("Custom Color…", pick_color)
+        if state.get("kind") == "protein":
+            ligand_colors(menu.addMenu("Ligand Color Options"))
+        else:
+            colors.addSeparator()
+            ligand_colors(colors)
         operations = menu.addMenu("Molecular Operations")
         for label, value in (("Hydrogens", "hydrogens"), ("Waters", "waters"), ("Ligands", "ligands")):
             choice(operations, "Show " + label, state.get("components", {}).get(value, True),

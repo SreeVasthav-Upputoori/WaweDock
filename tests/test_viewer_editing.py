@@ -632,3 +632,43 @@ def test_lasso_release_position_zoom_and_hidden_atoms(live_window, tmp_path):
         js(w.viewer, "clearSelection(); objects.precise.model.setStyle({},{}); viewer.render(); true")
         assert json.loads(js(w.viewer, "JSON.stringify(" + script + ")")) == []
         js(w.viewer, "setRepresentation('precise','spheres'); true")
+
+
+def test_ligand_colors_preserve_protein_water_and_selection(live_window):
+    w=live_window
+    w.controller.load_structure(DATA / '3PTB.pdb')
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    assert js(w.viewer, """(() => {
+      const o=objects['3PTB'], atoms=o.model.selectedAtoms({});
+      const protein=atoms.find(a=>!a.hetflag && a.atom==='CA');
+      const water=atoms.find(a=>WATERS.includes(a.resn));
+      const ligand=atoms.find(a=>a.resn==='BEN' && a.elem==='C');
+      const nitrogen=atoms.find(a=>a.resn==='BEN' && a.elem==='N');
+      const originalProtein=JSON.stringify(protein.style), originalWater=JSON.stringify(water.style);
+      setLigandColor('3PTB','#00bfff',true);
+      if(ligand.style.stick.colorscheme.map.C!=='#00bfff' ||
+         nitrogen.style.stick.colorscheme.map.N!==$3Dmol.elementColors.Jmol.N) return false;
+      if(JSON.stringify(protein.style)!==originalProtein || JSON.stringify(water.style)!==originalWater) return false;
+      pickMolecularSelection('3PTB',ligand,{button:0});
+      setLigandColor('3PTB','#cc33cc',false);
+      if(ligand.style.stick.color!=='#ffff00') return false;
+      clearSelection();
+      if(ligand.style.stick.color!=='#cc33cc') return false;
+      setRepresentation('3PTB','ribbon');
+      if(ligand.style.stick.color!=='#cc33cc') return false;
+      setLigandColor('3PTB',null,true);
+      return ligand.style.stick.colorscheme==='Jmol';
+    })()""")
+    ligand = '\n'.join(line for line in (DATA/'3PTB.pdb').read_text().splitlines()
+                       if line.startswith('HETATM') and line[17:20].strip()=='BEN')
+    w.viewer.add_object('pose',ligand,'pdb','ligand')
+    assert js(w.viewer, """(() => {
+      const o=objects.pose;
+      setLigandColor('pose','#ff9933',true);
+      if(o.model.selectedAtoms({elem:'C'})[0].style.stick.colorscheme.map.C!=='#ff9933') return false;
+      setLigandColor('pose','#3366ff',false);
+      setRepresentation('pose','ball-and-stick');
+      if(!o.model.selectedAtoms({}).every(a=>a.style.stick.color==='#3366ff' && a.style.sphere.color==='#3366ff')) return false;
+      setLigandColor('pose',null,true);
+      return o.customColor===null && o.color==='element' && o.carbon===o.originalCarbon;
+    })()""")
