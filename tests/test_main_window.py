@@ -74,6 +74,24 @@ def test_working_actions_enabled_and_future_ones_labelled(window):
     assert not screen.isEnabled() and "Phase 9" in screen.toolTip()
 
 
+def test_docking_actions_follow_background_job_lifecycle(window):
+    c = window.controller
+    assert not window.actions_["docking.cancel"].isEnabled()
+    c._docking_job = 70
+    c.docking_started.emit()
+    assert not window.actions_["docking.run"].isEnabled()
+    assert window.actions_["docking.cancel"].isEnabled()
+    c.runner.job_cancelled.emit(70)
+    assert window.actions_["docking.run"].isEnabled()
+    assert not window.actions_["docking.cancel"].isEnabled()
+    c._docking_job = 71
+    c.docking_started.emit()
+    c._docking_job = None
+    c.docking_finished.emit([])
+    assert window.actions_["docking.run"].isEnabled()
+    assert not window.actions_["docking.cancel"].isEnabled()
+
+
 def test_workflow_actions_open_the_relevant_step(window, monkeypatch):
     panel = window.docking_panel
     monkeypatch.setattr(window.controller, "prepare_receptor", lambda _options: None)

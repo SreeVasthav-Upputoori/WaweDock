@@ -155,12 +155,14 @@ def _safe(name: str) -> str:
 def _write_ligand_outputs(folder: Path, outcome: LigandOutcome) -> None:
     (folder / "poses.pdbqt").write_text("".join(f"MODEL {p.rank}\n{p.pdbqt}ENDMDL\n"
                                                for p in outcome.poses))
-    props = [{"Name": outcome.name, "Rank": p.rank, "Score_kcal_per_mol": p.score,
-              "RMSD_lb": p.rmsd_lb, "RMSD_ub": p.rmsd_ub,
-              "RMSD_to_reference": r if r is not None else "",
-              "Engine": outcome.result.engine if outcome.result else "",
-              "Note": "Predicted score, not a measured affinity"}
-             for p, r in zip(outcome.poses, outcome.reference_rmsd)]
+    props = []
+    for i, p in enumerate(outcome.poses):
+        r = outcome.reference_rmsd[i] if i < len(outcome.reference_rmsd) else None
+        props.append({"Name": outcome.name, "Rank": p.rank, "Score_kcal_per_mol": p.score,
+                      "RMSD_lb": p.rmsd_lb, "RMSD_ub": p.rmsd_ub,
+                      "RMSD_to_reference": r if r is not None else "",
+                      "Engine": outcome.result.engine if outcome.result else "",
+                      "Note": "Predicted score, not a measured affinity"})
     write_poses_sdf(folder / "poses.sdf", outcome.mols, props)
 
 
@@ -171,7 +173,8 @@ def results_rows(outcomes: list[LigandOutcome]) -> list[dict]:
             rows.append({"Ligand": o.name, "Pose": "", "Score (kcal/mol)": "", "Status": o.status,
                          "Message": o.message})
             continue
-        for p, r in zip(o.poses, o.reference_rmsd):
+        for i, p in enumerate(o.poses):
+            r = o.reference_rmsd[i] if i < len(o.reference_rmsd) else None
             rows.append({"Ligand": o.name, "Pose": p.rank, "Score (kcal/mol)": p.score,
                          "RMSD lb": p.rmsd_lb, "RMSD ub": p.rmsd_ub,
                          "RMSD to reference (A)": r if r is not None else "",

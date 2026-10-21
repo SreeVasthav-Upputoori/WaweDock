@@ -333,6 +333,9 @@ class Controller(QObject):
 
     # ------------------------------------------------------------- docking
     def run_docking(self, params: DockingParameters) -> None:
+        if self.docking_running:
+            self.message.emit("Docking is already running.")
+            return
         problems = []
         if self.receptor is None:
             problems.append("Prepare the receptor first.")
@@ -350,10 +353,10 @@ class Controller(QObject):
         self.params = params
         project = self.ensure_project()
         self.run_dir = project.new_run_dir()
-        self.docking_started.emit()
         job = DockingJob(self.receptor.pdbqt, list(self.prepared), self.box, params, self.run_dir,  # type: ignore[union-attr]
                          self.reference, self.source_pdb.name if self.source_pdb else "")
         self._docking_job = self._submit(job, self._docking_done)
+        self.docking_started.emit()
         self.message.emit("Docking started")
 
     def cancel_docking(self) -> None:
@@ -552,7 +555,8 @@ class Controller(QObject):
         from mds.chem.poses import write_poses_sdf
         mols, props = [], []
         for o in self.outcomes:
-            for p, m, r in zip(o.poses, o.mols, o.reference_rmsd):
+            for i, (p, m) in enumerate(zip(o.poses, o.mols)):
+                r = o.reference_rmsd[i] if i < len(o.reference_rmsd) else None
                 mols.append(m)
                 props.append({"Name": o.name, "Rank": p.rank, "Score_kcal_per_mol": p.score,
                               "RMSD_to_reference": r if r is not None else ""})

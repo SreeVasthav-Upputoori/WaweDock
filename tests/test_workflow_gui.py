@@ -33,7 +33,7 @@ def test_full_docking_workflow_and_project_reload(window, tmp_path):
 
     c.load_structure(DATA / "3PTB.pdb")
     assert c.source_pdb is not None and (c.project.root / "originals" / "3PTB.pdb").exists()
-    assert "3PTB" in window.project_explorer.object_names("Proteins") or True
+    assert "3PTB" in window.project_explorer.object_names("Proteins")
 
     c.prepare_receptor(ReceptorOptions())
     assert wait_until(lambda: c.receptor is not None, 60), errors

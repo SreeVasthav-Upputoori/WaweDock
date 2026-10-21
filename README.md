@@ -30,6 +30,8 @@ colour picker. Right-click empty space for background settings, camera reset and
 **Show / Hide Structures**, which can restore a hidden molecule. Project Explorer
 also retains its representation and colour menus. There is no Appearance sidebar.
 Preparation, measurements and image export remain in the top-level menus.
+Changing the viewport background (black, white, dark grey or a custom colour)
+does not change the application's interface colours.
 
 Right-clicking preserves the current selection. **Select Clicked…** selects the
 clicked atom, residue, chain or component; Shift/Ctrl-click and Alt-drag lasso still
@@ -69,6 +71,11 @@ The redesign is being delivered in separate steps: (1) main workspace and layout
 (2) molecular viewer context menus, (3) docking workflow, (4) Results & Analysis
 workspace, and (5) visual design consistency. Each step is committed and pushed
 individually. The current implementation completes steps 1 through 4.
+
+Technical hardening (step 6) prevents overlapping docking runs, keeps Run/Cancel
+actions in sync with background jobs, and retains every pose in CSV, Excel and
+SDF exports when optional reference RMSD values are unavailable. The application
+UI colour scheme is unchanged.
 
 ## Typical workflow
 
@@ -144,7 +151,7 @@ pip install wavedock[interactions]      # or: pip install openbabel-wheel
 ## Tests
 
 ```powershell
-pytest          # 32 tests: preparation, Vina adapter, redocking, reproducibility, interactions, GUI workflow
+pytest          # preparation, docking, interactions, GUI workflows and background jobs
 ```
 
 ## Windows executable

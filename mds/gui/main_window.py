@@ -413,6 +413,10 @@ class MainWindow(QMainWindow):
         c.ligands_prepared.connect(self._on_ligands_prepared)
         c.box_changed.connect(self._on_box_changed)
         c.docking_finished.connect(self._on_docking_finished)
+        c.docking_started.connect(self._sync_docking_actions)
+        c.docking_finished.connect(self._sync_docking_actions)
+        self.job_runner.job_failed.connect(self._sync_docking_actions)
+        self.job_runner.job_cancelled.connect(self._sync_docking_actions)
         c.selection_expand_requested.connect(lambda: self._viewer_call("expand_selection_to_chain"))
         c.selection_invert_requested.connect(lambda: self._viewer_call("invert_selection"))
         c.selection_mode_requested.connect(lambda mode: self._viewer_call("set_selection_mode", mode))
@@ -428,6 +432,12 @@ class MainWindow(QMainWindow):
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)
             self.viewer.edit_requested.connect(self._on_viewer_edit)
+        self._sync_docking_actions()
+
+    def _sync_docking_actions(self, *_args) -> None:
+        running = self.controller.docking_running
+        self.actions_["docking.run"].setEnabled(not running)
+        self.actions_["docking.cancel"].setEnabled(running)
 
     def _on_edit_history(self, undo: bool, redo: bool) -> None:
         self.actions_["edit.undo"].setEnabled(undo)
