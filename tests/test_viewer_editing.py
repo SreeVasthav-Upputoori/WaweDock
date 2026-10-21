@@ -33,6 +33,73 @@ def live_window(qapp, settings, tmp_path):
     window.close()
 
 
+def test_label_toggle_clears_nearby_residue_labels(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    ligand = '\n'.join(line for line in w.controller.source_pdb.read_text().splitlines()
+                       if line.startswith('HETATM') and line[17:20].strip() == 'BEN')
+    w.viewer.add_object('probe', ligand, 'pdb', 'ligand')
+    assert js(w.viewer, "labelResidues(true); showAround('probe',4.5,'3PTB'); viewer.labels.length > 0")
+    assert js(w.viewer, "setObjectLabels('3PTB',false); viewer.labels.length") == 0
+    assert js(w.viewer, "setRepresentation('3PTB','sticks'); showAround('probe',4.5,'3PTB'); viewer.labels.length") == 0
+    assert js(w.viewer, "labelResidues(true); viewer.labels.length > 0")
+    assert js(w.viewer, "labelResidues(false); viewer.labels.length") == 0
+    assert js(w.viewer, "measureShapes.push(viewer.addLabel('distance', {position:{x:0,y:0,z:0}})); setObjectLabels('3PTB',false); viewer.labels.length") == 1
+    assert js(w.viewer, "clearMeasurements(); viewer.labels.length") == 0
+
+
+def test_residue_single_click_component_double_click_and_overlay_highlights(live_window, tmp_path):
+    w = live_window
+    records = [
+        ('ATOM', 'N', 'ALA', 'A', 1, -1.2, 0, 'N'),
+        ('ATOM', 'CA', 'ALA', 'A', 1, 0, 0, 'C'),
+        ('ATOM', 'C', 'ALA', 'A', 1, 1.2, 0, 'C'),
+        ('ATOM', 'CA', 'GLY', 'B', 2, 8, 0, 'C'),
+        ('HETATM', 'O', 'HOH', 'W', 1, 0, 8, 'O'),
+        ('HETATM', 'H1', 'HOH', 'W', 1, .8, 8, 'H'),
+        ('HETATM', 'O', 'HOH', 'W', 2, 8, 8, 'O'),
+        ('HETATM', 'ZN', 'ZN', 'Z', 3, 16, 8, 'ZN'),
+        ('HETATM', 'N', 'MSE', 'C', 3, 14.8, 0, 'N'),
+        ('HETATM', 'CA', 'MSE', 'C', 3, 16, 0, 'C'),
+        ('HETATM', 'C', 'MSE', 'C', 3, 17.2, 0, 'C'),
+    ]
+    path = tmp_path / 'clicks.pdb'
+    path.write_text(''.join(
+        f'{record:<6}{i:5d} {atom:^4} {resn:>3} {chain}{resi:4d}    '
+        f'{x:8.3f}{y:8.3f}{0:8.3f}  1.00 20.00          {element:>2}  \n'
+        for i, (record, atom, resn, chain, resi, x, y, element) in enumerate(records, 1)) + 'END\n')
+    w.controller.load_structure(path)
+    assert wait_until(lambda: bool(js(w.viewer, "objects.clicks && objects.clicks.editable")), 10)
+    js(w.viewer, "setRepresentation('clicks','spheres'); setSelectionMode('chain'); true")
+    # Click selects exactly one residue even if a broader tool mode was chosen.
+    point = json.loads(js(w.viewer, "JSON.stringify(viewer.modelToScreen(objects.clicks.model.selectedAtoms({atom:'CA',chain:'A'})[0]))"))
+    QTest.mouseClick(w.viewer.focusProxy() or w.viewer, Qt.MouseButton.LeftButton,
+                     pos=QPoint(round(point['x']), round(point['y'])))
+    assert wait_until(lambda: len(w.controller.selection.get('clicks', [])) == 3)
+    # Dispatch the real DOM double-click listener against rendered geometry.
+    assert js(w.viewer, """(() => {
+      const p = viewer.modelToScreen(objects.clicks.model.selectedAtoms({atom:'CA',chain:'A'})[0]);
+      container.dispatchEvent(new MouseEvent('dblclick', {button:0,clientX:p.x,clientY:p.y,bubbles:true,detail:2}));
+      return selection.clicks.size;
+    })()""") == 7
+    js(w.viewer, "pickMolecularSelection('clicks',objects.clicks.model.selectedAtoms({resn:'HOH'})[0],{button:0,detail:1}); true")
+    assert wait_until(lambda: len(w.controller.selection.get('clicks', [])) == 2)
+    js(w.viewer, "pickMolecularSelection('clicks',objects.clicks.model.selectedAtoms({resn:'HOH'})[0],{button:0},true); true")
+    assert wait_until(lambda: len(w.controller.selection.get('clicks', [])) == 3)
+    assert js(w.viewer, "selectionShapes.length") == 1
+    assert js(w.viewer, "selectionShapes[0].stylespec.color") == '#ffff00'
+    assert js(w.viewer, "selectionShapes[0].boundingSphere.radius > 1.5")
+    # Prepared overlays highlight visually without gaining editing identities.
+    w.viewer.add_object('prepared-overlay', path.read_text(), 'pdb', 'protein')
+    js(w.viewer, "pickMolecularSelection('prepared-overlay',objects['prepared-overlay'].model.selectedAtoms({resn:'HOH'})[0],{button:0}); true")
+    assert js(w.viewer, "visualSelectionCount()") == 2
+    assert not w.controller.selection
+    assert js(w.viewer, "objects['prepared-overlay'].editable") is False
+    assert js(w.viewer, "clearSelection(); visualSelectionCount()") == 0
+    assert js(w.viewer, "selectionShapes.length") == 0
+
+
 def test_protein_styles_do_not_keep_all_atom_overlay(live_window):
     w = live_window
     w.controller.load_structure(DATA / "3PTB.pdb")

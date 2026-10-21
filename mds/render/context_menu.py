@@ -87,8 +87,9 @@ def build_context_menu(viewer, state: dict) -> QMenu:
                    lambda on, n=obj["name"]: viewer.set_visible(n, on))
     menu.addSeparator()
     selected = bool(state.get("selectionCount"))
-    menu.addAction("Focus on Selection", lambda: viewer._call("focusSelection")).setEnabled(selected)
-    menu.addAction("Clear Selection", viewer.clear_selection).setEnabled(selected)
+    highlighted = bool(state.get("focusCount", state.get("selectionCount")))
+    menu.addAction("Focus on Selection", lambda: viewer._call("focusSelection")).setEnabled(highlighted)
+    menu.addAction("Clear Selection", viewer.clear_selection).setEnabled(highlighted)
     menu.addAction("Delete Selected Atoms / Residues",
                    lambda: viewer.edit_requested.emit("delete")).setEnabled(selected)
     menu.addAction("Reset Camera", lambda: viewer.zoom_to(None))

@@ -33,6 +33,14 @@ Preparation, measurements and image export remain in the top-level menus.
 Changing the viewport background (black, white, dark grey or a custom colour)
 does not change the application's interface colours.
 
+Single left-click selects one amino-acid residue or one water molecule;
+double-click selects the whole protein (including modified amino acids) or all
+waters in the clicked structure. Selections appear in yellow, including on
+prepared read-only overlays. Shift/Ctrl-click toggles additional residues. The
+Selection & Cleanup mode controls lasso and expansion tools. Turning off
+**Show Labels** removes molecular labels, including when nearby-residue display
+is active; measurement labels remain until measurements are cleared.
+
 Right-clicking preserves the current selection. **Select Clicked…** selects the
 clicked atom, residue, chain or component; Shift/Ctrl-click and Alt-drag lasso still
 work as before. **Delete Selected Atoms / Residues** edits the imported structure

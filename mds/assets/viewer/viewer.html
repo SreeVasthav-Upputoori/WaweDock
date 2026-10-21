@@ -21,7 +21,7 @@ const viewer = $3Dmol.createViewer(document.getElementById("v"),
 const objects = {};          // name -> {model, kind, rep, color, visible, surf}
 let aroundSel = [];          // residue-selection styles in effect
 let boxShapes = [];
-let measureMode = "none", picks = [], measureShapes = [], residueLabels = [], labelsOn = false;
+let measureMode = "none", picks = [], measureShapes = [], labelsOn = false;
 const CARBON = ["#7fb7e6", "#e8b04a", "#7dd3a0", "#d98aa6", "#b4a3e0", "#e0d27a", "#8fd0d0", "#d99a7a"];
 let objectCount = 0;
 const WATERS = ["HOH", "WAT", "DOD", "H2O"], METALS = ["Zn", "Mg", "Ca", "Mn", "Fe", "Cu", "Ni", "Co", "Cd", "Na", "K"];
@@ -109,8 +109,10 @@ function addObject(name, data, fmt, kind, identities, preserveView) {
                    components: {hydrogens: true, waters: true, ligands: true}, labels: labelsOn, objectLabels: []};
   bindAtomIdentities(name, identities);
   model.setClickable({}, true, function(atom, view, event) {
+    const e = event && (event.originalEvent || event) || {};
+    if (e.button === 2) return;
     onPick(atom);
-    if (measureMode === "none") pickSelection(name, atom, event);
+    if (measureMode === "none") pickMolecularSelection(name, atom, event);
   });
   applyStyle(name);
   if (camera) viewer.setView(camera); else viewer.zoomTo({model: model.getID()});
@@ -118,10 +120,12 @@ function addObject(name, data, fmt, kind, identities, preserveView) {
 }
 function removeObject(name) {
   const o = objects[name]; if (!o) return;
+  const hadSelection = selection[name] || visualSelection[name];
   if (o.surf !== undefined) viewer.removeSurface(o.surf);
   o.objectLabels.forEach(label => viewer.removeLabel(label));
   viewer.removeModel(o.model); delete objects[name];
-  if (selection[name]) { delete selection[name]; if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); if (typeof emitSelection === "function") emitSelection(); }
+  delete visualSelection[name];
+  if (hadSelection) { delete selection[name]; if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); if (typeof emitSelection === "function") emitSelection(); }
   viewer.render();
 }
 function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); refreshObjectLabels(name); viewer.render(); } if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
@@ -172,6 +176,12 @@ function focusSelection() {
   Object.keys(selection).forEach(name => editableAtoms(name).forEach(a => {
     if (selection[name].has(a._wdIdentity.atom_index)) atoms.push(a);
   }));
+  Object.keys(visualSelection).forEach(name => {
+    const o = objects[name]; if (!o) return;
+    o.model.selectedAtoms({}).forEach(a => {
+      if (componentVisible(o, a) && visualSelection[name].has(a.index)) atoms.push(a);
+    });
+  });
   if (atoms.length) { viewer.zoomTo({predicate: a => atoms.includes(a)}); viewer.render(); }
 }
 
@@ -196,17 +206,15 @@ function nearbyResidues(p, l, cutoff) {
 function reapplyAround() {
   if (!around) return;
   const l = objects[around.ligand], p = objects[around.protein];
-  clearResLabels();
   if (!l || !p || !p.visible || !l.visible) return;
   const res = nearbyResidues(p, l, around.cutoff), byChain = {};
   Object.keys(res).forEach(k => { const [ch, ri] = k.split("|"); (byChain[ch] = byChain[ch] || []).push(parseInt(ri)); });
   Object.keys(byChain).forEach(ch => viewer.addStyle({model: p.model.getID(), chain: ch, resi: byChain[ch]}, {stick: {radius: 0.14, colorscheme: "Jmol"}}));
-  p.model.selectedAtoms({atom: "CA"}).forEach(a => { if (componentVisible(p, a) && res[a.chain + "|" + a.resi]) residueLabels.push(viewer.addLabel(a.resn + a.resi, {position: a, fontSize: 11, backgroundOpacity: 0.55, fontColor: "white", backgroundColor: "#333"})); });
+  refreshObjectLabels(around.protein);
   applyComponentVisibility(p);
   emit("measure", Object.keys(res).length + " residues within " + around.cutoff + " Å of " + around.ligand);
 }
-function clearAround() { around = null; clearResLabels(); Object.keys(objects).forEach(applyStyle); }
-function clearResLabels() { residueLabels.forEach(l => viewer.removeLabel(l)); residueLabels = []; }
+function clearAround() { around = null; Object.keys(objects).forEach(applyStyle); }
 
 function labelResidues(on) {
   labelsOn = on;

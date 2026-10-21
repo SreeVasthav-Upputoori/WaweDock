@@ -2,6 +2,8 @@
 // Selections contain canonical atom indices, never PDB serial numbers. The Python
 // bridge supplies identities from the same Gemmi structure used for file edits.
 const selection = {};
+// Read-only overlays can be highlighted, but never sent to Python as editable atoms.
+const visualSelection = {};
 const container = document.getElementById("v");
 let selectionMode = "residue", selectionShapes = [], lasso = null;
 let suppressPickUntil = 0;
@@ -60,17 +62,30 @@ function clearSelectionHighlights() {
 }
 function reapplySelectionHighlights() {
   clearSelectionHighlights();
-  Object.keys(selection).forEach(name => {
-    const selected = selection[name];
-    const shape = viewer.addShape({color: "#fde047", opacity: 0.55});
+  const names = new Set([...Object.keys(selection), ...Object.keys(visualSelection)]);
+  names.forEach(name => {
+    const o = objects[name]; if (!o || !o.visible) return;
+    const selected = o.editable ? selection[name] : visualSelection[name];
+    if (!selected || !selected.size) return;
+    const shape = viewer.addShape({color: "#ffff00", opacity: 0.65});
     selectionShapes.push(shape);
-    editableAtoms(name).forEach(a => {
-      if (selected.has(a._wdIdentity.atom_index)) {
-        shape.addSphere({center: a, radius: 0.45});
+    o.model.selectedAtoms({}).forEach(a => {
+      const id = o.editable ? a._wdIdentity.atom_index : a.index;
+      if (componentVisible(o, a) && selected.has(id)) {
+        // Extend beyond VDW spheres so the yellow selection stays visible.
+        shape.addSphere({center: a, radius: a.elem === "H" ? 1.35 : 1.95});
       }
     });
   });
   viewer.render();
+}
+function visualSelectionCount() {
+  let count = 0;
+  Object.keys(visualSelection).forEach(name => {
+    const o = objects[name]; if (!o || !o.visible) return;
+    count += o.model.selectedAtoms({}).filter(a => componentVisible(o, a) && visualSelection[name].has(a.index)).length;
+  });
+  return count;
 }
 function emitSelection() {
   const detail = {}; let count = 0;
@@ -79,11 +94,14 @@ function emitSelection() {
     if (chosen.length) detail[name] = chosen.map(a => a._wdIdentity);
     count += chosen.length;
   });
-  emit("selection", {detail: detail, summary: count ? count + " atom(s) selected" : ""});
+  const visualCount = visualSelectionCount();
+  const total = count + visualCount;
+  emit("selection", {detail: detail, summary: total ? total + " atom(s) selected" +
+    (visualCount ? " (" + visualCount + " read-only)" : "") : ""});
 }
 function commitSelection() { reapplySelectionHighlights(); emitSelection(); }
 function clearSelection() {
-  if (!Object.keys(selection).length) { clearSelectionHighlights(); viewer.render(); return; }
+  Object.keys(visualSelection).forEach(name => delete visualSelection[name]);
   Object.keys(selection).forEach(name => delete selection[name]);
   commitSelection();
 }
@@ -99,12 +117,55 @@ function pickSelection(name, atom, event) {
   const remove = group.every(a => current.has(a._wdIdentity.atom_index));
   if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
     Object.keys(selection).forEach(n => delete selection[n]);
+    Object.keys(visualSelection).forEach(n => delete visualSelection[n]);
     selection[name] = new Set();
   } else selection[name] = current;
   group.forEach(a => {
     const id = a._wdIdentity.atom_index;
     if ((e.shiftKey || e.ctrlKey || e.metaKey) && remove) selection[name].delete(id);
     else selection[name].add(id);
+  });
+  commitSelection();
+}
+function molecularResidueKey(a) {
+  return a._wdIdentity ? residueKey(a) : JSON.stringify([a.chain, a.resi, a.icode || "", a.resn]);
+}
+function pickMolecularSelection(name, atom, event, whole = false) {
+  const e = event && (event.originalEvent || event) || {};
+  if (lasso || Date.now() < suppressPickUntil || e.altKey || e.button === 2 ||
+      (!whole && e.detail >= 2)) return;
+  const o = objects[name]; if (!o || !o.visible) return;
+  const atoms = o.model.selectedAtoms({}).filter(a => componentVisible(o, a));
+  const water = WATERS.includes(atom.resn);
+  const proteinResidues = new Set(), backbone = new Map();
+  if (whole && !water) atoms.forEach(a => {
+    const key = molecularResidueKey(a);
+    if (!a.hetflag) proteinResidues.add(key);
+    if (!backbone.has(key)) backbone.set(key, new Set());
+    if (a.atom !== "CA" || a.elem === "C") backbone.get(key).add(a.atom);
+  });
+  // Modified amino acids may use HETATM; identify their peptide backbone too.
+  backbone.forEach((names, key) => {
+    if (["N", "CA", "C"].every(name => names.has(name))) proteinResidues.add(key);
+  });
+  const group = atoms.filter(a => {
+    if (whole && water) return WATERS.includes(a.resn);
+    if (whole && proteinResidues.has(molecularResidueKey(atom)))
+      return proteinResidues.has(molecularResidueKey(a));
+    return molecularResidueKey(a) === molecularResidueKey(atom);
+  });
+  const target = o.editable ? selection : visualSelection;
+  const atomId = a => o.editable ? a._wdIdentity.atom_index : a.index;
+  const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+  const previous = target[name] || new Set();
+  const remove = additive && group.every(a => previous.has(atomId(a)));
+  if (!additive) {
+    Object.keys(selection).forEach(n => delete selection[n]);
+    Object.keys(visualSelection).forEach(n => delete visualSelection[n]);
+    target[name] = new Set();
+  } else target[name] = previous;
+  group.forEach(a => {
+    if (remove) target[name].delete(atomId(a)); else target[name].add(atomId(a));
   });
   commitSelection();
 }
@@ -128,6 +189,7 @@ function invertSelection() {
   commitSelection();
 }
 function setSelectionFromPython(detail) {
+  Object.keys(visualSelection).forEach(name => delete visualSelection[name]);
   Object.keys(selection).forEach(name => delete selection[name]);
   Object.keys(detail).forEach(name => {
     selection[name] = new Set();
@@ -185,7 +247,10 @@ function finishLasso(cancel) {
   const active = lasso; lasso = null;
   active.svg.remove(); suppressPickUntil = Date.now()+200;
   if (cancel || active.points.length < 3) return;
-  if (!active.additive) Object.keys(selection).forEach(name => delete selection[name]);
+  if (!active.additive) {
+    Object.keys(selection).forEach(name => delete selection[name]);
+    Object.keys(visualSelection).forEach(name => delete visualSelection[name]);
+  }
   Object.keys(objects).forEach(name => {
     const atoms = editableAtoms(name), hits = new Set(), groups = atomGroups(atoms);
     atoms.forEach(a => {
@@ -241,12 +306,15 @@ document.addEventListener("keydown", e => {
 });
 // Raycast against the rendered atom geometry rather than choosing the nearest
 // screen coordinate: empty space must not act on a molecule behind the menu.
-function contextPayload(event) {
+function atomAtEvent(event) {
   const point = viewer.mouseXY(event.pageX, event.pageY);
   const candidates = Object.values(objects).flatMap(o => o.model.selectedAtoms({})
     .filter(a => componentVisible(o, a) && Object.keys(a.style || {}).length));
   const hits = viewer.targetedObjects(point.x, point.y, candidates);
-  const atom = hits.length ? hits[0].clickable : null;
+  return hits.length ? hits[0].clickable : null;
+}
+function contextPayload(event) {
+  const atom = atomAtEvent(event);
   const name = atom && atom._wdObject, o = name && objects[name];
   let count = 0;
   Object.keys(selection).forEach(n => { count += editableAtoms(n)
@@ -256,7 +324,7 @@ function contextPayload(event) {
     editable: !!(o && o.editable), atomIndex: atom && atom._wdIdentity ? atom._wdIdentity.atom_index : null,
     representation: o ? o.rep : null, color: o ? o.color : null,
     customColor: o ? o.customColor : null, components: o ? o.components : {},
-    labels: !!(o && o.labels), selectionCount: count, background: backgroundColor,
+    labels: !!(o && o.labels), selectionCount: count, focusCount: count + visualSelectionCount(), background: backgroundColor,
     objects: Object.keys(objects).map(n => ({name:n, visible:objects[n].visible})),
     selectionMode: selectionMode};
 }
@@ -269,4 +337,11 @@ function selectContextTarget(name, atomIndex, mode) {
 container.addEventListener("contextmenu", e => {
   e.preventDefault(); e.stopImmediatePropagation();
   emit("context", contextPayload(e));
+}, true);
+
+container.addEventListener("dblclick", e => {
+  if (e.button !== 0 || e.altKey || measureMode !== "none" || lasso) return;
+  const atom = atomAtEvent(e); if (!atom) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  pickMolecularSelection(atom._wdObject, atom, e, true);
 }, true);

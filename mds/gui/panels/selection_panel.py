@@ -21,7 +21,8 @@ class SelectionPanel(QWidget):
         self.summary.setStyleSheet("font-size: 11pt;")
 
         tip = QLabel(
-            "<small>Click to select; Shift/Ctrl-click to toggle. Alt-drag draws a freehand "
+            "<small>Click selects a residue; double-click selects the whole protein or all waters. "
+            "Selections appear yellow. Shift/Ctrl-click toggles. Alt-drag draws a freehand "
             "lasso through the structure's depth; Shift+Alt adds. Delete or right-click "
             "to delete. Esc clears. Edits can be undone.</small>")
         tip.setWordWrap(True)
@@ -67,7 +68,7 @@ class SelectionPanel(QWidget):
             self.mode.addItem(label, mode)
         self.mode.currentIndexChanged.connect(
             lambda _: self.c.selection_mode_requested.emit(self.mode.currentData()))
-        layout.addWidget(QLabel("Select by:"))
+        layout.addWidget(QLabel("Lasso / expansion mode:"))
         layout.addWidget(self.mode)
         layout.addWidget(_hline())
         layout.addWidget(self.expand_btn)

@@ -97,6 +97,14 @@ def test_ligand_menu_uses_molecular_representations(viewer):
     assert find(menu, "Sticks").isChecked()
 
 
+def test_read_only_visual_selection_can_be_focused_and_cleared(viewer):
+    menu = build_context_menu(viewer, state(editable=False, atomIndex=None,
+                                          selectionCount=0, focusCount=3))
+    assert find(menu, "Focus on Selection").isEnabled()
+    assert find(menu, "Clear Selection").isEnabled()
+    assert not find(menu, "Delete Selected Atoms / Residues").isEnabled()
+
+
 def test_color_picker_applies_only_valid_colors(viewer, monkeypatch):
     monkeypatch.setattr("mds.render.context_menu.QColorDialog.getColor", lambda *args: QColor("#123456"))
     menu = build_context_menu(viewer, state())
