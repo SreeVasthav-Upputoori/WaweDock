@@ -14,6 +14,7 @@ import logging
 from collections.abc import Callable
 
 from PySide6.QtCore import QPoint, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QWidget
@@ -52,7 +53,12 @@ class Mol3DViewer(QWebEngineView):
         self._context_menu = None
         self._ready = False
         self._queue: list[str] = []
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(80)
+        self._resize_timer.timeout.connect(self._sync_viewport)
         self._page = _Page(self)
+        self._page.setBackgroundColor(QColor("white"))
         self.setPage(self._page)
         self._page.message.connect(self._on_message)
         # Protocol attributes (callbacks) map onto the Qt signals.
@@ -61,6 +67,19 @@ class Mol3DViewer(QWebEngineView):
         self.on_selection: Callable[[dict, str], None] = self.selection_changed.emit
         self.load(QUrl.fromLocalFile(str(assets_dir() / "viewer" / "viewer.html")))
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_resize_timer"):
+            self._resize_timer.start()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._resize_timer.start()
+
+    def _sync_viewport(self) -> None:
+        if self._ready and self.isVisible() and self.width() > 0 and self.height() > 0:
+            self._page.runJavaScript("requestViewportSync();")
+
     # -------------------------------------------------------------- plumbing
     def _on_message(self, kind: str, data: object) -> None:
         if kind == "ready":
@@ -68,7 +87,13 @@ class Mol3DViewer(QWebEngineView):
             for js in self._queue:
                 self._page.runJavaScript(js)
             self._queue.clear()
+            self._resize_timer.start()
             self.ready.emit()
+        elif kind == "background":
+            color = QColor(str(data))
+            if color.isValid():
+                # Leave the Chromium callback before changing its native surface.
+                QTimer.singleShot(0, lambda value=color: self._page.setBackgroundColor(value))
         elif kind == "jserror":
             log.error("Viewer script error: %s", data)
         elif kind == "atom":

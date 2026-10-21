@@ -33,6 +33,68 @@ def live_window(qapp, settings, tmp_path):
     window.close()
 
 
+def test_viewport_resizes_without_unpainted_edges(live_window):
+    w = live_window
+
+    def snapshot():
+        return json.loads(js(w.viewer, """JSON.stringify((() => {
+          viewer.render();
+          const canvas = viewer.getCanvas(), host = document.getElementById('v');
+          const gl = viewer.renderer.getContext(), pixel = new Uint8Array(4), edges = [];
+          const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+          for (const [x,y] of [[1,1],[width-2,1],[width-2,height/2],[width-2,height-2],[1,height-2]]) {
+            gl.readPixels(Math.floor(x), Math.floor(y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+            edges.push(Array.from(pixel));
+          }
+          return {width:host.clientWidth,height:host.clientHeight,
+            viewerWidth:viewer.WIDTH,viewerHeight:viewer.HEIGHT,
+            canvasWidth:canvas.clientWidth,canvasHeight:canvas.clientHeight,
+            buffer:[width,height],viewport:Array.from(gl.getParameter(gl.VIEWPORT)),edges};
+        })())"""))
+
+    for workspace, size, background, rgb, zoom in (
+        (0, (1150, 750), '#ffffff', (255,255,255), 1),
+        (2, (1450, 900), '#000000', (0,0,0), 1),
+        (1, (1250, 800), '#123456', (18,52,86), 1.25),
+        (0, (1500, 920), '#ffffff', (255,255,255), 1),
+    ):
+        w.workspace.select(workspace)
+        w.resize(*size)
+        w.viewer.setZoomFactor(zoom)
+        js(w.viewer, f"setBackgroundColor('{background}'); true")
+        def fits():
+            state = snapshot()
+            return (state['width'] == state['viewerWidth'] == state['canvasWidth'] and
+                    state['height'] == state['viewerHeight'] == state['canvasHeight'])
+        assert wait_until(fits, 10), snapshot()
+        state = snapshot()
+        assert state['viewport'][2:] == state['buffer'], state
+        assert all(all(abs(pixel[i] - rgb[i]) <= 2 for i in range(3))
+                   for pixel in state['edges']), state
+        assert w.viewer.page().backgroundColor().name() == background
+    # An element-only layout change does not dispatch a browser window resize.
+    width = js(w.viewer, 'window.innerWidth')
+    js(w.viewer, "document.getElementById('v').style.right = '37px'; true")
+    assert wait_until(lambda: bool(js(w.viewer, "viewer.WIDTH === document.getElementById('v').clientWidth")), 10)
+    assert js(w.viewer, 'window.innerWidth') == width
+    js(w.viewer, "document.getElementById('v').style.right = '0px'; true")
+    assert wait_until(lambda: bool(js(w.viewer, "viewer.WIDTH === document.getElementById('v').clientWidth")), 10)
+
+
+def test_resizing_keeps_camera_and_selection(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    js(w.viewer, "pickMolecularSelection('3PTB',objects['3PTB'].model.selectedAtoms({atom:'CA'})[0],{button:0}); true")
+    selected = w.controller.selection.copy()
+    camera = js(w.viewer, "JSON.stringify(viewer.getView())")
+    for size in ((1100, 700), (1500, 900)):
+        w.resize(*size)
+        assert wait_until(lambda: bool(js(w.viewer, "viewer.WIDTH === document.getElementById('v').clientWidth && viewer.HEIGHT === document.getElementById('v').clientHeight")), 10)
+        assert js(w.viewer, "JSON.stringify(viewer.getView())") == camera
+        assert w.controller.selection == selected
+
+
 def test_label_toggle_clears_nearby_residue_labels(live_window):
     w = live_window
     w.controller.load_structure(DATA / "3PTB.pdb")

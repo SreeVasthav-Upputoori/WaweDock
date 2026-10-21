@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #ffffff; }
-  #v { position: absolute; inset: 0; }
+  #v { position: absolute; inset: 0; overflow: hidden; }
+  #v canvas { display: block; }
 </style>
 <script>window.addEventListener("error", function (e) { console.log("WD:" + JSON.stringify({type: "jserror", data: e.message + " @line " + e.lineno})); });</script>
 <script src="3Dmol-min.js"></script>
@@ -135,7 +136,14 @@ function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.co
 function zoomTo(name) { if (name && objects[name]) viewer.zoomTo({model: objects[name].model.getID()}); else viewer.zoomTo(); viewer.render(); }
 let backgroundColor = "#ffffff";
 function setBackground(dark) { setBackgroundColor(dark ? "#1b1d21" : "#ffffff"); }
-function setBackgroundColor(color) { backgroundColor = color; viewer.setBackgroundColor(color); viewer.render(); }
+function setBackgroundColor(color) {
+  backgroundColor = color;
+  document.documentElement.style.backgroundColor = color;
+  document.body.style.backgroundColor = color;
+  viewer.setBackgroundColor(color);
+  emit("background", color);
+  requestViewportSync();
+}
 function setCustomColor(name, color) {
   const o = objects[name]; if (!o) return;
   o.customColor = color; applyStyle(name);
@@ -273,7 +281,35 @@ function exportPng(scale) {
   try { viewer.setPixelRatio ? viewer.setPixelRatio(window.devicePixelRatio || 1) : null; viewer.resize(); viewer.render(); } catch (e) {}
   return uri;
 }
-window.addEventListener("resize", () => { viewer.resize(); viewer.render(); });
+// Dock/splitter changes can finish after the browser's window resize event.
+// Observe the actual host, then repaint after layout and the GPU buffer settle.
+let viewportFrame = null, viewportSize = null;
+function syncViewport() {
+  const host = document.getElementById("v");
+  const width = host.clientWidth, height = host.clientHeight;
+  if (!width || !height || document.hidden) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (!viewportSize || viewportSize.width !== width || viewportSize.height !== height || viewportSize.dpr !== dpr || viewer.renderer.isLost()) {
+    viewer.resize();
+    viewportSize = {width, height, dpr};
+  }
+  viewer.render();
+}
+function requestViewportSync() {
+  if (viewportFrame !== null) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = null;
+    syncViewport();
+    // Repaint once more after Chromium applies the resized drawing surface.
+    requestAnimationFrame(() => syncViewport());
+  });
+}
+const viewportObserver = new ResizeObserver(requestViewportSync);
+viewportObserver.observe(document.getElementById("v"));
+window.addEventListener("resize", requestViewportSync);
+if (window.visualViewport) window.visualViewport.addEventListener("resize", requestViewportSync);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) requestViewportSync(); });
+requestViewportSync();
 emit("ready", "");
 </script>
 </body>
