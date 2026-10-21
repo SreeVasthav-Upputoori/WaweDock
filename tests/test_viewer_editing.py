@@ -559,3 +559,34 @@ def test_large_selection_roundtrip_and_legacy_residue_matching(live_window):
       clearSelection();
       return complete && exact && !Object.keys(selection).length;
     })()""")
+
+
+def test_empty_space_click_clears_selection_but_drag_preserves_it(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    pick = "pickMolecularSelection('3PTB',objects['3PTB'].model.selectedAtoms({atom:'CA'})[0],{button:0}); true"
+    js(w.viewer, pick)
+    assert wait_until(lambda: bool(w.controller.selection))
+    target = w.viewer.focusProxy() or w.viewer
+    QTest.mouseClick(target, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(5,5))
+    assert wait_until(lambda: not w.controller.selection)
+    assert js(w.viewer, 'selectionStyles.length') == 0
+    js(w.viewer, pick)
+    assert wait_until(lambda: bool(w.controller.selection))
+    # Track the entire gesture, including a drag that returns to its start.
+    js(w.viewer, """(() => {
+      const canvas = viewer.getCanvas();
+      canvas.dispatchEvent(new MouseEvent('mousedown',{button:0,clientX:5,clientY:5,bubbles:true}));
+      canvas.dispatchEvent(new MouseEvent('mousemove',{buttons:1,clientX:30,clientY:5,bubbles:true}));
+      canvas.dispatchEvent(new MouseEvent('mouseup',{button:0,clientX:5,clientY:5,bubbles:true}));
+    })(); true""")
+    assert w.controller.selection
+    assert js(w.viewer, 'selectionStyles.length > 0')
+    # Read-only selections also clear on an empty click.
+    js(w.viewer, """clearSelection(); objects['3PTB'].editable = false;
+      pickMolecularSelection('3PTB',objects['3PTB'].model.selectedAtoms({atom:'CA'})[0],{button:0}); true""")
+    assert js(w.viewer, 'visualSelectionCount() > 0')
+    QTest.mouseClick(target, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(5,5))
+    assert wait_until(lambda: js(w.viewer, 'visualSelectionCount()') == 0)
+    assert js(w.viewer, 'selectionStyles.length') == 0

@@ -345,6 +345,26 @@ function atomAtEvent(event) {
   const hits = viewer.targetedObjects(point.x, point.y, candidates);
   return hits.length ? hits[0].clickable : null;
 }
+// Empty-space clicks clear highlights; camera drags and selection gestures do not.
+let backgroundPress = null;
+container.addEventListener("mousedown", e => {
+  backgroundPress = e.button === 0 && !e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey
+    ? {x:e.clientX, y:e.clientY, dragged:false} : null;
+}, true);
+document.addEventListener("mousemove", e => {
+  if (backgroundPress && Math.hypot(e.clientX-backgroundPress.x, e.clientY-backgroundPress.y) > 3)
+    backgroundPress.dragged = true;
+}, true);
+document.addEventListener("mouseup", e => {
+  const press = backgroundPress; backgroundPress = null;
+  if (!press || press.dragged || e.button !== 0 || !container.contains(e.target) ||
+      Math.hypot(e.clientX-press.x,e.clientY-press.y) > 3 ||
+      lasso || Date.now() < suppressPickUntil || measureMode !== "none") return;
+  if ((Object.keys(selection).length || Object.keys(visualSelection).length) && !atomAtEvent(e))
+    clearSelection();
+});
+window.addEventListener("blur", () => { backgroundPress = null; });
+
 function contextPayload(event) {
   const atom = atomAtEvent(event);
   const name = atom && atom._wdObject, o = name && objects[name];
