@@ -25,18 +25,21 @@ def test_menus_and_docks_exist(window):
     titles = [a.text().replace("&", "") for a in window.menuBar().actions()]
     assert titles == ["File", "Edit", "View", "Build", "Prepare", "Docking",
                       "Analyse", "Tools", "Window", "Help"]
-    for dock in (window.dock_project, window.dock_docking, window.dock_properties, window.dock_results,
+    for dock in (window.dock_project, window.dock_docking, window.dock_properties,
                  window.dock_report, window.dock_log, window.dock_jobs):
         assert dock.objectName()
     assert window.windowTitle() == "WaweDock"
 
 
 def test_default_workspace_prioritises_viewer(window):
-    assert window.centralWidget() is window.viewport
+    assert window.centralWidget() is window.workspace
+    assert window.workspace.splitter.widget(1) is window.viewport
+    assert window.results_panel.isHidden()
+    assert not window.findChildren(QDockWidget, "dockResults")
     assert not window.findChildren(QDockWidget, "dockAppearance")
     assert not window.dock_project.isHidden()
     assert not window.dock_docking.isHidden()
-    for dock in (window.dock_selection, window.dock_properties, window.dock_results,
+    for dock in (window.dock_selection, window.dock_properties,
                  window.dock_report, window.dock_log, window.dock_jobs):
         assert dock.isHidden()
         assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
@@ -84,11 +87,11 @@ def test_workflow_actions_open_the_relevant_step(window, monkeypatch):
         assert not window.dock_docking.isHidden()
         assert panel.current_step == step
         assert sum(not page.isHidden() for page in panel.step_pages) == 1
-    # Results Review opens the existing results interface until the next redesign step.
-    window.dock_results.hide()
+    window.workspace.select(0)
     panel.review_btn.setEnabled(True)
     panel.review_btn.click()
-    assert not window.dock_results.isHidden()
+    assert window.workspace.tabs.currentIndex() == 2
+    assert not window.results_panel.isHidden()
 
 
 def test_log_panel_receives_records(window):

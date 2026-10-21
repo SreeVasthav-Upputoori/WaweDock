@@ -5,7 +5,8 @@ Layout
 * Centre ............ 3D viewer (3Dmol.js via QtWebEngine)
 * Left dock ......... Compact Project Explorer; Selection & Cleanup on demand
 * Right docks ....... Docking Setup; Properties on demand
-* Bottom docks ...... Results | Preparation Report | Log | Jobs (hidden until requested)
+* Bottom docks ...... Preparation Report | Log | Jobs (hidden until requested)
+* Workspaces ........ Prepare | Dock | Results & Analysis (shared viewer)
 * Menus/toolbars .... built from a shared ``ActionRegistry``
 
 Every dock and toolbar has a stable ``objectName``; Qt needs it to save and restore layouts.
@@ -24,7 +25,7 @@ from PySide6.QtGui import (QActionGroup, QCloseEvent, QDesktopServices, QDragEnt
                            QIcon, QKeySequence, QPixmap)
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QInputDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox, QStyle, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QDialog, QWidget)
+                               QTableWidgetItem, QToolBar, QVBoxLayout, QDialog, QWidget)
 from rdkit import Chem
 
 from mds import APP_NAME, __version__
@@ -32,7 +33,7 @@ from mds.chem.workflow import LigandOutcome
 from mds.core.paths import assets_dir
 from mds.gui.actions import ActionRegistry
 from mds.gui.controller import Controller
-from mds.gui.layouts import LayoutManager
+from mds.gui.layouts import LAYOUT_VERSION, LayoutManager
 from mds.gui.panels.docking_panel import DockingPanel
 from mds.gui.panels.jobs_panel import JobsPanel
 from mds.gui.panels.log_panel import LogPanel
@@ -44,6 +45,7 @@ from mds.gui.panels.similarity_dialog import SimilarityDialog
 from mds.gui.status_bar import StudioStatusBar
 from mds.gui.theme import Theme, apply_theme
 from mds.gui.viewport import ViewportHost
+from mds.gui.workspaces import WorkspaceHost
 from mds.jobs import JobRunner
 from mds.jobs.diagnostics import JobSystemSelfTest
 from mds.project import Project
@@ -88,6 +90,9 @@ class MainWindow(QMainWindow):
         self._pose_object = ""
         self._receptor_objects: list[str] = []
         self._source_object = ""
+        self._workspace_mode = 0
+        self._modeling_state = None
+        self._restoring_workspace = False
         self._focus_state = None
         self._similarity_dialog: SimilarityDialog | None = None
 
@@ -105,10 +110,80 @@ class MainWindow(QMainWindow):
         self.set_theme(Theme(settings.value("appearance/theme", Theme.LIGHT.value)))
         log.info("%s %s started", APP_NAME, __version__)
 
+    def _on_workspace_changed(self, index: int) -> None:
+        previous = self._workspace_mode
+        if index == 2:
+            if previous != 2 and not self._restoring_workspace:
+                self._modeling_state = self.saveState(LAYOUT_VERSION)
+            for dock in (self.dock_docking, self.dock_selection, self.dock_properties,
+                         self.dock_report, self.dock_log, self.dock_jobs):
+                dock.hide()
+        elif not self._restoring_workspace:
+            if previous == 2 and self._modeling_state is not None:
+                self.restoreState(self._modeling_state, LAYOUT_VERSION)
+            self._workspace_mode = index
+            current = self.docking_panel.current_step
+            if index == 0 and current not in (0, 1):
+                self.docking_panel.show_step(0)
+            elif index == 1 and current not in (2, 3, 4):
+                self.docking_panel.show_step(3)
+            if self._focus_state is None:
+                self.dock_docking.show()
+        self._workspace_mode = index
+
+    def _activate_docking_step(self, index: int) -> None:
+        if not self._restoring_workspace:
+            self.workspace.select(0 if index < 2 else 1)
+        if self._focus_state is None and not self._restoring_workspace:
+            self.dock_docking.show()
+            self.dock_docking.raise_()
+
+    def _save_workspace_state(self, prefix: str) -> None:
+        self.settings.setValue(f"{prefix}/workspace", self.workspace.tabs.currentIndex())
+        self.settings.setValue(f"{prefix}/resultsSplit", self.workspace.splitter.saveState())
+        self.settings.setValue(f"{prefix}/analysisSplit", self.results_panel.splitter.saveState())
+        self.settings.setValue(f"{prefix}/workspaceVersion", LAYOUT_VERSION)
+        if self._modeling_state is not None:
+            self.settings.setValue(f"{prefix}/modelingState", self._modeling_state)
+        else:
+            self.settings.remove(f"{prefix}/modelingState")
+
+    def _restore_workspace_state(self, prefix: str) -> None:
+        if int(self.settings.value(f"{prefix}/workspaceVersion", 0)) != LAYOUT_VERSION:
+            return
+        index = max(0, min(2, int(self.settings.value(f"{prefix}/workspace", 0))))
+        self._restoring_workspace = True
+        try:
+            self._modeling_state = self.settings.value(f"{prefix}/modelingState")
+            if self.workspace.tabs.currentIndex() == index:
+                self._on_workspace_changed(index)
+            else:
+                self.workspace.select(index)
+            for key, splitter in (("resultsSplit", self.workspace.splitter),
+                                  ("analysisSplit", self.results_panel.splitter)):
+                state = self.settings.value(f"{prefix}/{key}")
+                if state is not None:
+                    splitter.restoreState(state)
+        finally:
+            self._restoring_workspace = False
+
+    def _reset_layout(self) -> None:
+        self.workspace.select(0)
+        self.layouts.reset()
+        self._modeling_state = None
+        self.workspace.splitter.setSizes([550, 850])
+
+    def _clear_pose(self) -> None:
+        if self._pose_object:
+            self._viewer_call("clear_residue_selection")
+            self._viewer_call("remove_object", self._pose_object)
+            self._pose_object = ""
+
     # ================================================================ build
     def _build_central(self, use_viewer: bool) -> None:
         self.viewport = ViewportHost()
-        self.setCentralWidget(self.viewport)
+        self.workspace = WorkspaceHost(self.viewport)
+        self.setCentralWidget(self.workspace)
         if not use_viewer:
             return
         try:
@@ -145,24 +220,21 @@ class MainWindow(QMainWindow):
         self.dock_selection = self._add_dock(self.selection_panel, "Selection & Cleanup", "dockSelection", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
-        self.dock_results = self._add_dock(self.results_panel, "Results", "dockResults", bottom)
+        self.workspace.set_results(self.results_panel)
         self.dock_report = self._add_dock(self.report_panel, "Preparation Report", "dockReport", bottom)
         self.dock_log = self._add_dock(self.log_panel, "Log", "dockLog", bottom)
         self.dock_jobs = self._add_dock(self.jobs_panel, "Jobs", "dockJobs", bottom)
 
         self.tabifyDockWidget(self.dock_docking, self.dock_properties)
-        for a, b in ((self.dock_results, self.dock_report), (self.dock_report, self.dock_log),
-                     (self.dock_log, self.dock_jobs)):
+        for a, b in ((self.dock_report, self.dock_log), (self.dock_log, self.dock_jobs)):
             self.tabifyDockWidget(a, b)
         self.dock_docking.raise_()
-        self.dock_results.raise_()
         self.tabifyDockWidget(self.dock_project, self.dock_selection)
         self.dock_project.raise_()
-        for dock in (self.dock_selection, self.dock_properties, self.dock_results,
+        for dock in (self.dock_selection, self.dock_properties,
                      self.dock_report, self.dock_log, self.dock_jobs):
             dock.hide()
         self.resizeDocks([self.dock_project, self.dock_docking], [220, 340], Qt.Orientation.Horizontal)
-        self.resizeDocks([self.dock_results], [260], Qt.Orientation.Vertical)
         logging.getLogger("mds").addHandler(self.log_panel.handler)
 
     def _icon(self, pixmap: QStyle.StandardPixmap) -> QIcon:
@@ -224,7 +296,7 @@ class MainWindow(QMainWindow):
         a.add("docking.screen", "&Virtual Screening queue / resume…", planned_phase=9,
               tip="Importing several ligands already docks them as a batch")
         # Analyse
-        a.add("analyse.results", "Docking &Results", slot=lambda: (self.dock_results.show(), self.dock_results.raise_()))
+        a.add("analyse.results", "Docking &Results", slot=lambda: self.workspace.select(2))
         a.add("analyse.descriptors", "Ligand &Descriptors / Drug-likeness…", slot=self._show_descriptors)
         a.add("analyse.similarity", "&Similarity && Clustering…", slot=self._show_similarity,
               tip="Tanimoto/Morgan fingerprint similarity and clustering of the prepared ligands")
@@ -237,7 +309,7 @@ class MainWindow(QMainWindow):
         a.add("tools.project_folder", "Open &Project Folder", slot=self._open_project_folder)
         # Window
         a.add("window.save_layout", "&Save Layout As…", slot=self._save_named_layout)
-        a.add("window.reset_layout", "&Reset Layout", slot=lambda: self.layouts.reset())
+        a.add("window.reset_layout", "&Reset Layout", slot=self._reset_layout)
         # Help
         a.add("help.notice", "&Scientific Interpretation Notice", slot=self._show_scientific_notice)
         a.add("help.about", "&About WaweDock", slot=self._show_about)
@@ -284,7 +356,7 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("&Window")
         panels = m.addMenu("&Panels")
         for dock in (self.dock_project, self.dock_docking, self.dock_properties,
-                     self.dock_selection, self.dock_results, self.dock_report, self.dock_log,
+                     self.dock_selection, self.dock_report, self.dock_log,
                      self.dock_jobs):
             panels.addAction(dock.toggleViewAction())
         m.addSeparator()
@@ -321,8 +393,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         c, ex = self.controller, self.project_explorer
-        self.docking_panel.step_activated.connect(
-            lambda _i: (self.dock_docking.show(), self.dock_docking.raise_()))
+        self.workspace.workspace_changed.connect(self._on_workspace_changed)
+        self.docking_panel.step_activated.connect(self._activate_docking_step)
         self.docking_panel.results_requested.connect(self.actions_["analyse.results"].trigger)
         ex.item_selected.connect(self._on_item_selected)
         ex.visibility_changed.connect(lambda n, v: self._viewer_call("set_visible", n, v))
@@ -349,6 +421,7 @@ class MainWindow(QMainWindow):
         c.editing_view_requested.connect(self._show_editing_structure)
         c.selection_cleared.connect(lambda: self._viewer_call("clear_selection"))
         self.results_panel.pose_selected.connect(self._show_pose)
+        self.results_panel.pose_cleared.connect(self._clear_pose)
         if self.viewer is not None:
             self.viewer.visibility_changed.connect(ex.set_visible)
             self.viewer.atom_info.connect(self.status.set_selection)
@@ -480,8 +553,8 @@ class MainWindow(QMainWindow):
                 "Type": "Docking outcome", "Status": o.status, "Message": o.message,
                 "Best score (kcal/mol)": o.best_score if o.best_score is not None else "-",
                 "Poses": len(o.poses)}, visible=False, kind="result")
-        self.dock_results.show()
-        self.dock_results.raise_()
+        if self._focus_state is None:
+            self.workspace.select(2)
 
     def _show_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
         if self.viewer is None:
@@ -520,6 +593,7 @@ class MainWindow(QMainWindow):
             self._focus_state = (self.saveState(), self.isMaximized())
             for widget in self.findChildren(QDockWidget) + self.findChildren(QToolBar):
                 widget.hide()
+            self.workspace.set_focus_mode(True)
             self.menuBar().hide()
             self.statusBar().hide()
             self.showFullScreen()
@@ -528,6 +602,7 @@ class MainWindow(QMainWindow):
             self._focus_state = None
             self.showMaximized() if maximized else self.showNormal()
             self.restoreState(state)
+            self.workspace.set_focus_mode(False)
             self.menuBar().show()
             self.statusBar().show()
 
@@ -704,11 +779,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Interaction diagram", "Run a docking calculation first, "
                                     "then select a pose in the Results panel.")
             return
-        self.dock_results.show()
-        self.dock_results.raise_()
-        tabs = self.results_panel.findChild(QTabWidget)
-        if tabs is not None:
-            tabs.setCurrentWidget(self.results_panel.interactions_panel)
+        self.workspace.select(2)
+        self.results_panel.analysis_tabs.setCurrentWidget(self.results_panel.interactions_panel)
         self.results_panel.interactions_panel._analyse()
 
     def _show_similarity(self) -> None:

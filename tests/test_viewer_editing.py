@@ -147,6 +147,33 @@ def test_context_event_opens_native_menu_and_hydrogens_stay_hidden(live_window, 
     })()""")
 
 
+def test_results_workspace_displays_selected_pose_and_keeps_viewer_state(live_window):
+    from test_results_workspace import sample_outcomes
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    js(w.viewer, "setSelectionMode('atom'); pickSelection('3PTB', objects['3PTB'].model.selectedAtoms({atom:'CA'})[0], {}); true")
+    assert wait_until(lambda: len(w.controller.selection.get('3PTB', [])) == 1)
+    original_viewer = w.viewer
+    w.controller.outcomes = sample_outcomes()
+    w.controller.docking_finished.emit(w.controller.outcomes)
+    assert w.workspace.tabs.currentIndex() == 2
+    assert not w.results_panel.isHidden()
+    assert wait_until(lambda: bool(js(w.viewer, "!!objects['pose: ligand B #1']")), 10)
+    w.results_panel.select_pose(w.controller.outcomes[0], 1)
+    assert wait_until(lambda: bool(js(w.viewer, "!!objects['pose: ligand A #2']")), 10)
+    assert js(w.viewer, "objects['pose: ligand B #1'] === undefined")
+    camera = js(w.viewer, "JSON.stringify(viewer.getView())")
+    w.workspace.select(0)
+    w.workspace.select(1)
+    w.workspace.select(2)
+    assert w.viewer is original_viewer
+    assert js(w.viewer, "JSON.stringify(viewer.getView())") == camera
+    assert len(w.controller.selection.get('3PTB', [])) == 1
+    w.results_panel.search.setText('no matching pose')
+    assert wait_until(lambda: bool(js(w.viewer, "objects['pose: ligand A #2'] === undefined")), 10)
+
+
 def test_real_viewer_atom_identity_delete_and_undo(live_window):
     w = live_window
     c = w.controller

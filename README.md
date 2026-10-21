@@ -20,7 +20,7 @@ python -m mds
 The molecular viewer occupies the main workspace, with a compact Project Explorer
 on the left and Docking Setup on the right. Panels can be resized, closed, or
 detached by dragging their title bars. Reopen panels through **Window > Panels**;
-Results, Preparation Report, Properties, Selection & Cleanup, Log and Jobs are
+Preparation Report, Properties, Selection & Cleanup, Log and Jobs are
 available on demand. **Window > Reset Layout** restores this arrangement.
 
 Right-click a molecule directly in the viewer for representation, colour, labels,
@@ -44,8 +44,21 @@ Review**. Click a step header to expand it; click it again to collapse it. Only 
 step shows its detailed settings at a time, and changing steps preserves inputs.
 Headers report completion, partial ligand preparation, invalid boxes, running
 jobs, cancellation and failure from the current project state. The execution step
-lists missing prerequisites; Review Results opens the existing results interface.
+lists missing prerequisites; Review Results opens Results & Analysis.
 Preparation and docking continue to run in background jobs.
+
+Use the top-level **Prepare | Dock | Results & Analysis** switcher to change
+workspaces. Results & Analysis places a searchable, numerically sortable pose
+table beside the same molecular viewer, with a resizable divider. Selecting a row
+shows its actual docking pose. Ctrl/Shift-select rows and open **Compare Poses**
+to compare their scores and RMSD metrics; **Score Comparison** charts the best
+score per ligand, and clicking a bar selects that pose. Contacts and ProLIF
+interaction analysis remain available in the analysis tabs. The **Export** menu
+provides CSV, Excel, SDF and a standalone HTML metrics report; exports include all
+results regardless of the search filter. Workspace switching preserves the
+viewer, camera and molecular selection, and restores the setup panel arrangement
+when returning to Prepare or Dock. Workspace and splitter layouts are saved with
+the session and named layouts. There is no bottom Results dock.
 
 Use **View > Full Screen** for a molecular viewing mode with panels and toolbars
 hidden. Press **Escape** to restore the previous layout and window state.
@@ -55,7 +68,7 @@ once; project files and molecular data are unaffected.
 The redesign is being delivered in separate steps: (1) main workspace and layout,
 (2) molecular viewer context menus, (3) docking workflow, (4) Results & Analysis
 workspace, and (5) visual design consistency. Each step is committed and pushed
-individually. The current implementation completes steps 1 through 3.
+individually. The current implementation completes steps 1 through 4.
 
 ## Typical workflow
 

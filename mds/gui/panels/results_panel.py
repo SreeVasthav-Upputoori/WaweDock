@@ -5,10 +5,10 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
-                               QPushButton, QSplitter, QStackedWidget, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
+                               QLineEdit, QMenu, QPushButton, QSplitter, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from mds.chem.contacts import CAVEAT
 from mds.chem.interactions import CAVEAT as INTERACTION_CAVEAT
@@ -16,6 +16,7 @@ from mds.chem.interactions import InteractionResult
 from mds.chem.workflow import LigandOutcome, SCORE_DISCLAIMER
 from mds.core.paths import assets_dir
 from mds.gui.controller import Controller
+from mds.gui.panels.score_chart import ScoreChart
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
 
@@ -79,6 +80,24 @@ class InteractionsPanel(QWidget):
 
         controller.interactions_started.connect(self._started)
         controller.interactions_ready.connect(self._ready)
+        controller.runner.job_failed.connect(lambda job_id, _tb: self._job_stopped(job_id, "failed"))
+        controller.runner.job_cancelled.connect(lambda job_id: self._job_stopped(job_id, "cancelled"))
+
+    def clear_pose(self) -> None:
+        self._current = None
+        self.table.setRowCount(0)
+        self.status.setText("Select a pose, then click Analyse.")
+        self._diagram_stack.setCurrentWidget(self._placeholder)
+        self._placeholder.setText("<i>No diagram yet.</i>")
+
+    def _job_stopped(self, job_id: int, status: str) -> None:
+        try:
+            is_interaction = self.c.runner.name(job_id).startswith("Interaction analysis")
+        except KeyError:
+            return
+        if is_interaction:
+            self.analyse_btn.setEnabled(True)
+            self.status.setText(f"Interaction analysis {status}. See Log for details; you can retry.")
 
     def set_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
         self._current = (outcome, pose_index)
@@ -126,23 +145,27 @@ class InteractionsPanel(QWidget):
 
 
 class ResultsPanel(QWidget):
+    pose_cleared = Signal()
     pose_selected = Signal(object, int)         # LigandOutcome, pose index
 
     def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.c = controller
         self._rows: list[tuple[LigandOutcome, int]] = []
+        self._current_pose = None
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().hide()
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setToolTip("Select a pose to view it. Ctrl/Shift-select rows to compare them in Compare Poses.")
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.currentCellChanged.connect(lambda *_args: self._selection_changed())
 
         self.contacts = QTableWidget(0, 3)
         self.contacts.setHorizontalHeaderLabels(["Residue", "Min. distance (Å)", "Distance-based candidates"])
@@ -160,25 +183,49 @@ class ResultsPanel(QWidget):
         cl.addWidget(caveat)
 
         self.interactions_panel = InteractionsPanel(controller)
-        side_tabs = QTabWidget()
-        side_tabs.addTab(contact_box, "Distance-based contacts")
-        side_tabs.addTab(self.interactions_panel, "Interactions (ProLIF)")
+        self.analysis_tabs = QTabWidget()
+        self.analysis_tabs.setUsesScrollButtons(True)
+        self.analysis_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.analysis_tabs.addTab(contact_box, "Contacts")
+        self.analysis_tabs.addTab(self.interactions_panel, "Interactions")
+        self.comparison = QTableWidget(0, len(COLUMNS))
+        self.comparison.setHorizontalHeaderLabels(COLUMNS)
+        self.comparison.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.comparison.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.analysis_tabs.addTab(self.comparison, "Compare Poses")
+        self.score_chart = ScoreChart()
+        self.score_chart.set_outcomes([])
+        self.score_chart.pose_selected.connect(self.select_pose)
+        self.analysis_tabs.addTab(self.score_chart, "Score Comparison")
 
-        split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(self.table)
-        split.addWidget(side_tabs)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.table)
+        self.splitter.addWidget(self.analysis_tabs)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
 
         self.summary = QLabel("No docking results yet.")
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.summary, 1)
-        for text, fmt in (("Export CSV…", "csv"), ("Export Excel…", "xlsx"), ("Export SDF…", "sdf")):
-            b = QPushButton(text)
-            b.clicked.connect(lambda _=False, f=fmt: self._export(f))
-            buttons.addWidget(b)
-        open_btn = QPushButton("Open run folder")
+        self.summary.setWordWrap(True)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search ligands, poses or scores...")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter_rows)
+        self.match_count = QLabel("0 poses")
+        self.export_button = QToolButton()
+        self.export_button.setText("Export")
+        self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        export_menu = QMenu(self.export_button)
+        for text, fmt in (("CSV", "csv"), ("Excel", "xlsx"), ("SDF", "sdf"), ("HTML Report", "html")):
+            export_menu.addAction(text, lambda _on=False, f=fmt: self._export(f))
+        self.export_button.setMenu(export_menu)
+        self.export_button.setToolTip("Export all results, including poses hidden by search.")
+        open_btn = QToolButton()
+        open_btn.setText("Run Folder")
         open_btn.clicked.connect(self._open_folder)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.search, 1)
+        buttons.addWidget(self.export_button)
         buttons.addWidget(open_btn)
 
         disclaimer = QLabel(f"<small><i>{SCORE_DISCLAIMER}</i></small>")
@@ -186,21 +233,29 @@ class ResultsPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
+        layout.addWidget(self.summary)
         layout.addLayout(buttons)
-        layout.addWidget(split, 1)
+        layout.addWidget(self.match_count)
+        layout.addWidget(self.splitter, 1)
         layout.addWidget(disclaimer)
         controller.docking_finished.connect(self.show_outcomes)
 
     def show_outcomes(self, outcomes: list[LigandOutcome]) -> None:
+        blocker = QSignalBlocker(self.table)
         self.table.setSortingEnabled(False)
+        self.contacts.setRowCount(0)
+        self.interactions_panel.clear_pose()
+        self.comparison.setRowCount(0)
         self.table.setRowCount(0)
         self._rows = []
+        self._current_pose = None
         failed = []
         for o in outcomes:
             if o.status != "ok":
                 failed.append(f"{o.name}: {o.status} {o.message}")
                 continue
-            for i, (p, r) in enumerate(zip(o.poses, o.reference_rmsd)):
+            for i, p in enumerate(o.poses):
+                r = o.reference_rmsd[i] if i < len(o.reference_rmsd) else None
                 row = self.table.rowCount()
                 self.table.insertRow(row)
                 cells = [QTableWidgetItem(o.name), _NumItem(p.rank, str(p.rank)),
@@ -218,7 +273,7 @@ class ResultsPanel(QWidget):
         self.table.setSortingEnabled(True)
         self.table.sortItems(2, Qt.SortOrder.AscendingOrder)
         ok = [o for o in outcomes if o.status == "ok"]
-        text = f"{len(ok)} ligand(s) docked"
+        text = f"{len(ok)} ligand(s) docked" if outcomes else "No docking results yet."
         refs = [o.reference_rmsd[0] for o in ok if o.reference_rmsd and o.reference_rmsd[0] is not None]
         if refs:
             verdict = "SUCCESS (<2 Å)" if refs[0] < 2.0 else "NOT reproduced (≥2 Å)"
@@ -226,15 +281,62 @@ class ResultsPanel(QWidget):
         if failed:
             text += f" · {len(failed)} failed: " + "; ".join(failed)
         self.summary.setText(text)
-        if self._rows:
-            self.table.selectRow(0)
+        self.score_chart.set_outcomes(outcomes)
+        del blocker
+        self._filter_rows()
+
+    def _filter_rows(self, *_args) -> None:
+        query = self.search.text().strip().casefold()
+        blocker = QSignalBlocker(self.table)
+        visible = []
+        for row in range(self.table.rowCount()):
+            matches = not query or any(query in self.table.item(row, col).text().casefold()
+                                       for col in range(self.table.columnCount()))
+            self.table.setRowHidden(row, not matches)
+            if matches:
+                visible.append(row)
+            else:
+                self.table.selectionModel().select(self.table.model().index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Deselect | QItemSelectionModel.SelectionFlag.Rows)
+        selected = self.table.selectionModel().selectedRows()
+        if visible and not selected:
+            self.table.selectRow(visible[0])
+        elif not visible:
+            self.table.clearSelection()
+        del blocker
+        self.match_count.setText(f"{len(visible)} / {self.table.rowCount()} poses")
+        self._selection_changed()
+
+    def select_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
+        self.search.clear()
+        for row in range(self.table.rowCount()):
+            idx = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            candidate, index = self._rows[idx]
+            if candidate is outcome and index == pose_index:
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                return
 
     def _selection_changed(self) -> None:
-        rows = self.table.selectionModel().selectedRows()
+        rows = [index.row() for index in self.table.selectionModel().selectedRows()
+                if not self.table.isRowHidden(index.row())]
+        self.comparison.setRowCount(len(rows))
+        for target, source in enumerate(rows):
+            for col in range(len(COLUMNS)):
+                self.comparison.setItem(target, col, QTableWidgetItem(self.table.item(source, col).text()))
         if not rows:
+            self._current_pose = None
+            self.contacts.setRowCount(0)
+            self.interactions_panel.clear_pose()
+            self.pose_cleared.emit()
             return
-        idx = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
+        row = self.table.currentRow()
+        row = row if row in rows else rows[0]
+        idx = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         outcome, pose_i = self._rows[idx]
+        if self._current_pose is not None and self._current_pose[0] is outcome and self._current_pose[1] == pose_i:
+            return
+        self._current_pose = (outcome, pose_i)
         self._show_contacts(outcome, pose_i)
         self.interactions_panel.set_pose(outcome, pose_i)
         self.pose_selected.emit(outcome, pose_i)
@@ -261,8 +363,31 @@ class ResultsPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Export results", default, f"*.{fmt}")
         if not path:
             return
-        {"csv": self.c.export_csv, "xlsx": self.c.export_excel, "sdf": self.c.export_sdf}[fmt](Path(path))
+        if fmt == "html":
+            self.export_report(Path(path))
+        else:
+            {"csv": self.c.export_csv, "xlsx": self.c.export_excel, "sdf": self.c.export_sdf}[fmt](Path(path))
         self.c.message.emit(f"Exported {path}")
+
+    def export_report(self, path: Path) -> None:
+        """Export all pose metrics and run failures without fabricating analysis."""
+        rows = []
+        for outcome, i in self._rows:
+            pose = outcome.poses[i]
+            rmsd = outcome.reference_rmsd[i] if i < len(outcome.reference_rmsd) else None
+            values = [outcome.name, pose.rank, pose.score, pose.rmsd_lb, pose.rmsd_ub,
+                      "" if rmsd is None else rmsd, pose.conformer + 1]
+            rows.append("<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in values) + "</tr>")
+        failures = [f"{o.name}: {o.status} {o.message}" for o in self.c.outcomes if o.status != "ok"]
+        headers = "".join(f"<th>{html.escape(column)}</th>" for column in COLUMNS)
+        document = ('<!doctype html><meta charset="utf-8"><title>WaweDock Results</title>'
+                    '<style>body{font-family:system-ui;margin:2rem}table{border-collapse:collapse}'
+                    'td,th{padding:.5rem;border:1px solid #ccc;text-align:left}</style>'
+                    '<h1>WaweDock Results</h1><p>' + html.escape(SCORE_DISCLAIMER) + '</p>'
+                    '<table><thead><tr>' + headers + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
+                    '<h2>Run failures</h2><p>' + html.escape('; '.join(failures) or 'None reported.') + '</p>')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(document, encoding="utf-8")
 
     def _open_folder(self) -> None:
         if self.c.run_dir:

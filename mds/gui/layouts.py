@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QMainWindow
 
 log = logging.getLogger("mds.gui.layouts")
 
-LAYOUT_VERSION = 5
+LAYOUT_VERSION = 6
 
 
 class LayoutManager:
@@ -42,6 +42,8 @@ class LayoutManager:
     def save_session(self) -> None:
         self._settings.setValue("session/geometry", self._window.saveGeometry())
         self._settings.setValue("session/state", self._window.saveState(LAYOUT_VERSION))
+        if hasattr(self._window, "_save_workspace_state"):
+            self._window._save_workspace_state("session")
 
     def restore_session(self) -> bool:
         geometry = self._settings.value("session/geometry")
@@ -51,6 +53,8 @@ class LayoutManager:
         if state is None:
             return False
         ok = self._window.restoreState(state, LAYOUT_VERSION)
+        if ok and hasattr(self._window, "_restore_workspace_state"):
+            self._window._restore_workspace_state("session")
         if not ok:
             log.warning("Stored session layout is incompatible; using default layout")
         return ok
@@ -65,12 +69,16 @@ class LayoutManager:
 
     def save_named(self, name: str) -> None:
         self._settings.setValue(f"layouts/{name}/state", self._window.saveState(LAYOUT_VERSION))
+        if hasattr(self._window, "_save_workspace_state"):
+            self._window._save_workspace_state(f"layouts/{name}")
         log.info("Layout saved: %s", name)
 
     def restore_named(self, name: str) -> bool:
         state = self._settings.value(f"layouts/{name}/state")
         ok = state is not None and self._window.restoreState(state, LAYOUT_VERSION)
         if ok:
+            if hasattr(self._window, "_restore_workspace_state"):
+                self._window._restore_workspace_state(f"layouts/{name}")
             log.info("Layout restored: %s", name)
         else:
             log.warning("Layout '%s' could not be restored", name)
