@@ -29,6 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv[1:]
     if args[:1] == ["--validate"]:
         return _validate(args[1:])
+    # Give source launches their own Windows taskbar identity instead of Python's.
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("WaweDock.Desktop")
     # Organisation/application names determine where QSettings and
     # QStandardPaths store data, so they must be set before either is used.
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -44,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
 
     splash = QSplashScreen(QPixmap(str(assets_dir() / "wavedock-splash.png")).scaledToWidth(
         280, Qt.TransformationMode.SmoothTransformation))
+    splash.setWindowIcon(app_icon())
     splash.show()
     app.processEvents()
     window = MainWindow(QSettings(), log_dir=log_dir)

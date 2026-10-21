@@ -69,6 +69,8 @@ def main() -> None:
         raise OSError("Could not save icon")
     with Image.open(OUT / "wavedock.png") as image:
         image.save(OUT / "wavedock.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
+    # A new filename lets Explorer discard the previous design's cached icon.
+    (OUT / "binding-pocket.ico").write_bytes((OUT / "wavedock.ico").read_bytes())
     if not draw_splash().save(str(OUT / "wavedock-splash.png")):
         raise OSError("Could not save splash")
     print("Wrote Binding Pocket PNG, ICO and splash assets")

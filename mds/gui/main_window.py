@@ -67,7 +67,7 @@ SCIENTIFIC_NOTICE = (
 
 
 def app_icon() -> QIcon:
-    return QIcon(str(assets_dir() / "wavedock.ico"))
+    return QIcon(str(assets_dir() / "binding-pocket.ico"))
 
 
 class MainWindow(QMainWindow):

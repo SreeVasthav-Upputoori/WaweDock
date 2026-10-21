@@ -30,7 +30,7 @@ exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="WaweDock",
-    icon="mds/assets/wavedock.ico",
+    icon="mds/assets/binding-pocket.ico",
     console=False,
     version=None,
 )
