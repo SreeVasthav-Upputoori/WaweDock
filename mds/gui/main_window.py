@@ -321,6 +321,9 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         c, ex = self.controller, self.project_explorer
+        self.docking_panel.step_activated.connect(
+            lambda _i: (self.dock_docking.show(), self.dock_docking.raise_()))
+        self.docking_panel.results_requested.connect(self.actions_["analyse.results"].trigger)
         ex.item_selected.connect(self._on_item_selected)
         ex.visibility_changed.connect(lambda n, v: self._viewer_call("set_visible", n, v))
         ex.representation_requested.connect(lambda n, r: self._viewer_call("set_representation", n, r))
@@ -667,6 +670,7 @@ class MainWindow(QMainWindow):
         self._viewer_call("clear_residue_selection")
 
     def _focus_site(self) -> None:
+        self.docking_panel.show_step(2)
         self.dock_docking.show()
         self.dock_docking.raise_()
         self.docking_panel.site_method.setFocus()

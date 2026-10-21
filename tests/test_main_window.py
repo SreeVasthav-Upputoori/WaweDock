@@ -71,6 +71,26 @@ def test_working_actions_enabled_and_future_ones_labelled(window):
     assert not screen.isEnabled() and "Phase 9" in screen.toolTip()
 
 
+def test_workflow_actions_open_the_relevant_step(window, monkeypatch):
+    panel = window.docking_panel
+    monkeypatch.setattr(window.controller, "prepare_receptor", lambda _options: None)
+    monkeypatch.setattr(window.controller, "prepare_ligands", lambda **_options: None)
+    monkeypatch.setattr(window.controller, "run_docking", lambda _options: None)
+    for action, step in (("prepare.protein", 0), ("prepare.ligands", 1),
+                         ("docking.box", 2), ("docking.run", 3)):
+        window.dock_docking.hide()
+        panel.show_step(-1)
+        window.actions_[action].trigger()
+        assert not window.dock_docking.isHidden()
+        assert panel.current_step == step
+        assert sum(not page.isHidden() for page in panel.step_pages) == 1
+    # Results Review opens the existing results interface until the next redesign step.
+    window.dock_results.hide()
+    panel.review_btn.setEnabled(True)
+    panel.review_btn.click()
+    assert not window.dock_results.isHidden()
+
+
 def test_log_panel_receives_records(window):
     logging.getLogger("mds.test").warning("hello from test")
     assert wait_until(lambda: "hello from test" in window.log_panel._view.toPlainText())

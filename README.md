@@ -38,6 +38,15 @@ and supports Undo/Redo. Prepared receptors and docking poses remain read-only.
 Hydrogen, water and ligand visibility switches only change the view; they do not
 remove atoms from the project or change docking inputs.
 
+Docking Setup is a five-step workflow: **Receptor Preparation**, **Ligand
+Preparation**, **Docking Box Configuration**, **Docking Execution**, and **Results
+Review**. Click a step header to expand it; click it again to collapse it. Only one
+step shows its detailed settings at a time, and changing steps preserves inputs.
+Headers report completion, partial ligand preparation, invalid boxes, running
+jobs, cancellation and failure from the current project state. The execution step
+lists missing prerequisites; Review Results opens the existing results interface.
+Preparation and docking continue to run in background jobs.
+
 Use **View > Full Screen** for a molecular viewing mode with panels and toolbars
 hidden. Press **Escape** to restore the previous layout and window state.
 This redesign updates the saved layout version, so older dock arrangements reset
@@ -46,7 +55,7 @@ once; project files and molecular data are unaffected.
 The redesign is being delivered in separate steps: (1) main workspace and layout,
 (2) molecular viewer context menus, (3) docking workflow, (4) Results & Analysis
 workspace, and (5) visual design consistency. Each step is committed and pushed
-individually. The current implementation completes steps 1 and 2.
+individually. The current implementation completes steps 1 through 3.
 
 ## Typical workflow
 
