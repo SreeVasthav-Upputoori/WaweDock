@@ -35,9 +35,11 @@ does not change the application's interface colours.
 
 Single left-click selects one amino-acid residue or one water molecule;
 double-click selects the whole protein (including modified amino acids) or all
-waters in the clicked structure. Selections appear in yellow, including on
-prepared read-only overlays. Shift/Ctrl-click toggles additional residues. The
-Selection & Cleanup mode controls lasso and expansion tools. Turning off
+waters in the clicked structure. Selection recolours the existing representation
+opaque yellow without adding spheres or changing its size, including on prepared
+read-only overlays. Deselecting restores the original colours. Shift/Ctrl-click
+toggles additional residues. The Selection & Cleanup mode controls lasso and
+expansion tools. Turning off
 **Show Labels** removes molecular labels, including when nearby-residue display
 is active; measurement labels remain until measurements are cleared.
 

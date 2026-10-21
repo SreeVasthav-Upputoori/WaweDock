@@ -49,6 +49,29 @@ def test_label_toggle_clears_nearby_residue_labels(live_window):
     assert js(w.viewer, "clearMeasurements(); viewer.labels.length") == 0
 
 
+def test_selected_cartoon_and_ribbon_are_opaque_yellow_without_extra_shapes(live_window):
+    w = live_window
+    w.controller.load_structure(DATA / "3PTB.pdb")
+    assert wait_until(lambda: bool(js(w.viewer, "objects['3PTB'] && objects['3PTB'].editable")), 10)
+    for representation in ('cartoon', 'ribbon'):
+        js(w.viewer, f"clearSelection(); setRepresentation('3PTB','{representation}'); true")
+        original = js(w.viewer, "JSON.stringify(objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style)")
+        shapes = js(w.viewer, "viewer.shapes.length")
+        assert js(w.viewer, "pickMolecularSelection('3PTB',objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0],{button:0},true); true")
+        assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false}).every(a => a.style.cartoon.color === '#ffff00' && a.style.cartoon.opacity === 1 && !a.style.sphere)")
+        assert js(w.viewer, "viewer.shapes.length") == shapes
+        # Changing colours while selected must restore that new scheme on deselection.
+        js(w.viewer, "setColorScheme('3PTB','residue'); true")
+        assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style.cartoon.color") == '#ffff00'
+        js(w.viewer, "clearSelection(); true")
+        assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style.cartoon.colorscheme") == 'amino'
+        assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style.cartoon.color === '#ffff00'") is False
+        # Restore and verify the original representation's geometry options.
+        js(w.viewer, "setColorScheme('3PTB','chain'); true")
+        if representation == 'cartoon':
+            assert js(w.viewer, "JSON.stringify(objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style)") == original
+
+
 def test_residue_single_click_component_double_click_and_overlay_highlights(live_window, tmp_path):
     w = live_window
     records = [
@@ -87,9 +110,8 @@ def test_residue_single_click_component_double_click_and_overlay_highlights(live
     assert wait_until(lambda: len(w.controller.selection.get('clicks', [])) == 2)
     js(w.viewer, "pickMolecularSelection('clicks',objects.clicks.model.selectedAtoms({resn:'HOH'})[0],{button:0},true); true")
     assert wait_until(lambda: len(w.controller.selection.get('clicks', [])) == 3)
-    assert js(w.viewer, "selectionShapes.length") == 1
-    assert js(w.viewer, "selectionShapes[0].stylespec.color") == '#ffff00'
-    assert js(w.viewer, "selectionShapes[0].boundingSphere.radius > 1.5")
+    assert js(w.viewer, "viewer.shapes.length") == 0
+    assert js(w.viewer, "objects.clicks.model.selectedAtoms({resn:'HOH'}).every(a => a.style.sphere.color === '#ffff00' && a.style.sphere.opacity === 1 && a.style.sphere.scale === 0.22)")
     # Prepared overlays highlight visually without gaining editing identities.
     w.viewer.add_object('prepared-overlay', path.read_text(), 'pdb', 'protein')
     js(w.viewer, "pickMolecularSelection('prepared-overlay',objects['prepared-overlay'].model.selectedAtoms({resn:'HOH'})[0],{button:0}); true")
@@ -97,7 +119,8 @@ def test_residue_single_click_component_double_click_and_overlay_highlights(live
     assert not w.controller.selection
     assert js(w.viewer, "objects['prepared-overlay'].editable") is False
     assert js(w.viewer, "clearSelection(); visualSelectionCount()") == 0
-    assert js(w.viewer, "selectionShapes.length") == 0
+    assert js(w.viewer, "selectionStyles.length") == 0
+    assert js(w.viewer, "viewer.shapes.length") == 0
 
 
 def test_protein_styles_do_not_keep_all_atom_overlay(live_window):

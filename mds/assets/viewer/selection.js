@@ -5,7 +5,7 @@ const selection = {};
 // Read-only overlays can be highlighted, but never sent to Python as editable atoms.
 const visualSelection = {};
 const container = document.getElementById("v");
-let selectionMode = "residue", selectionShapes = [], lasso = null;
+let selectionMode = "residue", selectionStyles = [], lasso = null;
 let suppressPickUntil = 0;
 
 function bindAtomIdentities(name, identities) {
@@ -57,8 +57,11 @@ function setSelectionMode(mode) {
   if (["atom", "residue", "chain", "component"].includes(mode)) selectionMode = mode;
 }
 function clearSelectionHighlights() {
-  selectionShapes.forEach(s => viewer.removeShape(s));
-  selectionShapes = [];
+  selectionStyles.forEach(group => {
+    const o = objects[group.name];
+    if (o && o.model === group.model) o.model.setStyle({index: group.indices}, group.style);
+  });
+  selectionStyles = [];
 }
 function reapplySelectionHighlights() {
   clearSelectionHighlights();
@@ -67,14 +70,36 @@ function reapplySelectionHighlights() {
     const o = objects[name]; if (!o || !o.visible) return;
     const selected = o.editable ? selection[name] : visualSelection[name];
     if (!selected || !selected.size) return;
-    const shape = viewer.addShape({color: "#ffff00", opacity: 0.65});
-    selectionShapes.push(shape);
-    o.model.selectedAtoms({}).forEach(a => {
+    const groups = new Map();
+    const atoms = o.model.selectedAtoms({});
+    const cartoonResidues = new Set();
+    atoms.forEach(a => {
       const id = o.editable ? a._wdIdentity.atom_index : a.index;
-      if (componentVisible(o, a) && selected.has(id)) {
-        // Extend beyond VDW spheres so the yellow selection stays visible.
-        shape.addSphere({center: a, radius: a.elem === "H" ? 1.35 : 1.95});
-      }
+      if (selected.has(id) && a.style.cartoon) cartoonResidues.add(molecularResidueKey(a));
+    });
+    atoms.forEach(a => {
+      const id = o.editable ? a._wdIdentity.atom_index : a.index;
+      // A cartoon is drawn per residue, even when the editable selection is one atom.
+      const selectedCartoon = a.style.cartoon && cartoonResidues.has(molecularResidueKey(a));
+      if (!componentVisible(o, a) || (!selected.has(id) && !selectedCartoon)) return;
+      const key = JSON.stringify(a.style);
+      if (!groups.has(key)) groups.set(key, {name, model:o.model, style:a.style, indices:[]});
+      groups.get(key).indices.push(a.index);
+    });
+    groups.forEach(group => {
+      const yellow = {};
+      Object.keys(group.style).forEach(rep => {
+        yellow[rep] = Object.assign({}, group.style[rep]);
+        // Keep the original geometry, radius and scale; override only its colour
+        // and transparency. Transparent surface-picking proxies stay invisible.
+        delete yellow[rep].colorscheme;
+        delete yellow[rep].colorfunc;
+        yellow[rep].color = "#ffff00";
+        yellow[rep].opacity = o.rep === "surface" && rep === "sphere" && group.style[rep].opacity === 0 ? 0 : 1;
+      });
+      if (!Object.keys(yellow).length) return;
+      selectionStyles.push(group);
+      o.model.setStyle({index:group.indices}, yellow);
     });
   });
   viewer.render();

@@ -42,6 +42,7 @@ function colorSpec(o) {
 
 function applyStyle(name) {
   const o = objects[name]; if (!o) return;
+  clearSelectionHighlights();
   const c = o.customColor ? {color: o.customColor} : colorSpec(o);
   const s = {};
   switch (o.rep) {
@@ -188,7 +189,7 @@ function focusSelection() {
 // -------- residues within a cutoff of a ligand
 let around = null;
 function showAround(ligand, cutoff, protein) {
-  around = {ligand: ligand, cutoff: cutoff, protein: protein}; reapplyAround(); viewer.render();
+  around = {ligand: ligand, cutoff: cutoff, protein: protein}; reapplyAround(); reapplySelectionHighlights(); viewer.render();
 }
 function nearbyResidues(p, l, cutoff) {
   const lig = l.model.selectedAtoms({}), prot = p.model.selectedAtoms({}), c2 = cutoff * cutoff, seen = {};
@@ -205,6 +206,7 @@ function nearbyResidues(p, l, cutoff) {
 }
 function reapplyAround() {
   if (!around) return;
+  clearSelectionHighlights();
   const l = objects[around.ligand], p = objects[around.protein];
   if (!l || !p || !p.visible || !l.visible) return;
   const res = nearbyResidues(p, l, around.cutoff), byChain = {};
