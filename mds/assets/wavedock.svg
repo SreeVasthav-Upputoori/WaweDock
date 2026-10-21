@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>WaweDock binding pocket</title>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#064DFF"/>
+  <g fill="#FFFFFF">
+    <path d="M112 112H332V164L240 256L332 348V400H112Z"/>
+    <path d="M368 196L428 256L368 316L308 256Z"/>
+  </g>
+</svg>

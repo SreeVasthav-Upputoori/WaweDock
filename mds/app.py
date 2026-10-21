@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(log_dir)
     install_exception_hook()
 
-    splash = QSplashScreen(QPixmap(str(assets_dir() / "wavedock.png")).scaledToWidth(
+    splash = QSplashScreen(QPixmap(str(assets_dir() / "wavedock-splash.png")).scaledToWidth(
         280, Qt.TransformationMode.SmoothTransformation))
     splash.show()
     app.processEvents()
