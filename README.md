@@ -15,6 +15,28 @@ cd "D:\Tools\Docking tool"
 python -m mds
 ```
 
+## Workspace controls
+
+The molecular viewer occupies the main workspace, with a compact Project Explorer
+on the left and Docking Setup on the right. Panels can be resized, closed, or
+detached by dragging their title bars. Reopen panels through **Window > Panels**;
+Results, Preparation Report, Properties, Selection & Cleanup, Log and Jobs are
+available on demand. **Window > Reset Layout** restores this arrangement.
+
+Change a structure's representation or colour through its right-click menu in
+Project Explorer. The permanent Appearance sidebar has been removed. Preparation,
+measurements and image export remain available in the top-level menus.
+
+Use **View > Full Screen** for a molecular viewing mode with panels and toolbars
+hidden. Press **Escape** to restore the previous layout and window state.
+This redesign updates the saved layout version, so older dock arrangements reset
+once; project files and molecular data are unaffected.
+
+The redesign is being delivered in separate steps: (1) main workspace and layout,
+(2) molecular viewer context menus, (3) docking workflow, (4) Results & Analysis
+workspace, and (5) visual design consistency. Each step is committed and pushed
+individually. The current implementation completes step 1.
+
 ## Typical workflow
 
 1. **File ▸ Fetch from PDB** (e.g. `1HSG`) or **Open Structure** (PDB/mmCIF, or drag-and-drop).

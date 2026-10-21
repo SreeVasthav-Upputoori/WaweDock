@@ -3,9 +3,9 @@
 Layout
 ------
 * Centre ............ 3D viewer (3Dmol.js via QtWebEngine)
-* Left dock ......... Project Explorer
-* Right docks ....... Docking Setup | Properties            (tabbed)
-* Bottom docks ...... Results | Preparation Report | Log | Jobs   (tabbed)
+* Left dock ......... Compact Project Explorer; Selection & Cleanup on demand
+* Right docks ....... Docking Setup; Properties on demand
+* Bottom docks ...... Results | Preparation Report | Log | Jobs (hidden until requested)
 * Menus/toolbars .... built from a shared ``ActionRegistry``
 
 Every dock and toolbar has a stable ``objectName``; Qt needs it to save and restore layouts.
@@ -37,7 +37,6 @@ from mds.gui.panels.docking_panel import DockingPanel
 from mds.gui.panels.jobs_panel import JobsPanel
 from mds.gui.panels.log_panel import LogPanel
 from mds.gui.panels.project_explorer import ProjectExplorer
-from mds.gui.panels.appearance_panel import AppearancePanel
 from mds.gui.panels.properties_panel import PropertiesPanel
 from mds.gui.panels.selection_panel import SelectionPanel
 from mds.gui.panels.results_panel import ReportPanel, ResultsPanel
@@ -89,6 +88,7 @@ class MainWindow(QMainWindow):
         self._pose_object = ""
         self._receptor_objects: list[str] = []
         self._source_object = ""
+        self._focus_state = None
         self._similarity_dialog: SimilarityDialog | None = None
 
         self._build_central(use_viewer)
@@ -102,10 +102,6 @@ class MainWindow(QMainWindow):
         self.layouts = LayoutManager(self, settings)
         self.layouts.capture_default()
         self.layouts.restore_session()
-        # Migrate only this dock once, retaining existing arrangements of all others.
-        if str(settings.value("editing/selectionPanelVersion", "0")) != "1":
-            self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_selection)
-            settings.setValue("editing/selectionPanelVersion", 1)
         self.set_theme(Theme(settings.value("appearance/theme", Theme.LIGHT.value)))
         log.info("%s %s started", APP_NAME, __version__)
 
@@ -137,7 +133,6 @@ class MainWindow(QMainWindow):
         left, right, bottom = (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
                                Qt.DockWidgetArea.BottomDockWidgetArea)
         self.project_explorer = ProjectExplorer()
-        self.appearance = AppearancePanel(self.project_explorer, self._viewer_call)
         self.selection_panel = SelectionPanel(self.controller)
         self.properties = PropertiesPanel()
         self.docking_panel = DockingPanel(self.controller)
@@ -147,7 +142,6 @@ class MainWindow(QMainWindow):
         self.jobs_panel = JobsPanel(self.job_runner)
 
         self.dock_project = self._add_dock(self.project_explorer, "Project Explorer", "dockProject", left)
-        self.dock_appearance = self._add_dock(self.appearance, "Appearance", "dockAppearance", left)
         self.dock_selection = self._add_dock(self.selection_panel, "Selection & Cleanup", "dockSelection", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
@@ -162,7 +156,12 @@ class MainWindow(QMainWindow):
             self.tabifyDockWidget(a, b)
         self.dock_docking.raise_()
         self.dock_results.raise_()
-        self.resizeDocks([self.dock_project, self.dock_docking], [250, 400], Qt.Orientation.Horizontal)
+        self.tabifyDockWidget(self.dock_project, self.dock_selection)
+        self.dock_project.raise_()
+        for dock in (self.dock_selection, self.dock_properties, self.dock_results,
+                     self.dock_report, self.dock_log, self.dock_jobs):
+            dock.hide()
+        self.resizeDocks([self.dock_project, self.dock_docking], [220, 340], Qt.Orientation.Horizontal)
         self.resizeDocks([self.dock_results], [260], Qt.Orientation.Vertical)
         logging.getLogger("mds").addHandler(self.log_panel.handler)
 
@@ -208,6 +207,9 @@ class MainWindow(QMainWindow):
         a.add("view.measure.dihedral", "Measure D&ihedral", slot=lambda: self._measure("dihedral"))
         a.add("view.measure.off", "Stop Measuring", slot=lambda: self._measure("none"))
         a.add("view.measure.clear", "Clear Measurements", slot=lambda: self._viewer_call("clear_measurements"))
+        a.add("view.exit_fullscreen", "Exit Molecular Full Screen",
+              slot=lambda: a["view.fullscreen"].setChecked(False), shortcut="Escape")
+        self.addAction(a["view.exit_fullscreen"])
         # Build
         a.add("build.from_smiles", "Ligand from &SMILES…", slot=lambda: self.docking_panel._add_smiles())
         # Prepare
@@ -281,7 +283,7 @@ class MainWindow(QMainWindow):
         m.addMenu("&Diagnostics").addAction(a["tools.selftest"])
         m = mb.addMenu("&Window")
         panels = m.addMenu("&Panels")
-        for dock in (self.dock_project, self.dock_appearance, self.dock_docking, self.dock_properties,
+        for dock in (self.dock_project, self.dock_docking, self.dock_properties,
                      self.dock_selection, self.dock_results, self.dock_report, self.dock_log,
                      self.dock_jobs):
             panels.addAction(dock.toggleViewAction())
@@ -297,32 +299,25 @@ class MainWindow(QMainWindow):
         menu("&Help", ["help.notice", None, "help.about"])
 
     def _build_toolbars(self) -> None:
-        a = self.actions_
-        tb = QToolBar("Standard", self)
-        tb.setObjectName("toolbarStandard")
-        for key in ("file.new", "file.open", "file.save"):
-            tb.addAction(a[key])
-        tb.addSeparator()
-        tb.addAction(a["file.open_structure"])
-        tb.addAction(a["file.fetch_pdb"])
+        a, sp = self.actions_, QStyle.StandardPixmap
+        icons = {"docking.box": sp.SP_FileDialogDetailedView,
+                 "docking.run": sp.SP_MediaPlay, "docking.cancel": sp.SP_MediaStop,
+                 "view.reset_camera": sp.SP_BrowserReload,
+                 "view.fullscreen": sp.SP_TitleBarMaxButton}
+        for key, icon in icons.items():
+            a[key].setIcon(self._icon(icon))
+        tb = QToolBar("Workspace", self)
+        tb.setObjectName("toolbarWorkspace")
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        for keys in (("file.open", "file.save", "file.open_structure", "file.fetch_pdb"),
+                     ("docking.box", "docking.run", "docking.cancel"),
+                     ("view.reset_camera", "view.fullscreen")):
+            if tb.actions():
+                tb.addSeparator()
+            for key in keys:
+                tb.addAction(a[key])
         self.addToolBar(tb)
-
-        wf = QToolBar("Workflow", self)
-        wf.setObjectName("toolbarWorkflow")
-        wf.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        for key in ("prepare.protein", "prepare.ligands", "docking.box", "docking.run", "docking.cancel"):
-            wf.addAction(a[key])
-        self.addToolBar(wf)
-
-        vw = QToolBar("Viewer", self)
-        vw.setObjectName("toolbarViewer")
-        vw.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        for key in ("view.reset_camera", "view.measure.distance", "view.measure.angle", "view.measure.dihedral",
-                    "view.measure.clear", "file.export_image"):
-            vw.addAction(a[key])
-        self.addToolBar(vw)
-        for t in (tb, wf, vw):
-            self.toolbars_menu.addAction(t.toggleViewAction())
+        self.toolbars_menu.addAction(tb.toggleViewAction())
 
     def _connect_signals(self) -> None:
         c, ex = self.controller, self.project_explorer
@@ -431,6 +426,7 @@ class MainWindow(QMainWindow):
         self._viewer_call("clear_measurements")
         self._viewer_call("clear_residue_selection")
         self._on_structure_loaded(Path(path).stem, path, preserve_view=True)
+        self.dock_selection.show()
         self.dock_selection.raise_()
 
     def _on_receptor_prepared(self, result) -> None:
@@ -516,7 +512,20 @@ class MainWindow(QMainWindow):
         self.set_theme(Theme.LIGHT if self.current_theme() is Theme.DARK else Theme.DARK)
 
     def _toggle_fullscreen(self, on: bool) -> None:
-        self.showFullScreen() if on else self.showNormal()
+        if on and self._focus_state is None:
+            self._focus_state = (self.saveState(), self.isMaximized())
+            for widget in self.findChildren(QDockWidget) + self.findChildren(QToolBar):
+                widget.hide()
+            self.menuBar().hide()
+            self.statusBar().hide()
+            self.showFullScreen()
+        elif not on and self._focus_state is not None:
+            state, maximized = self._focus_state
+            self._focus_state = None
+            self.showMaximized() if maximized else self.showNormal()
+            self.restoreState(state)
+            self.menuBar().show()
+            self.statusBar().show()
 
     def _on_item_selected(self, title: str, props: dict) -> None:
         self.properties.show_properties(title, props)
@@ -711,6 +720,7 @@ class MainWindow(QMainWindow):
     # ---- misc
     def _run_self_test(self) -> None:
         self.job_runner.submit(JobSystemSelfTest())
+        self.dock_jobs.show()
         self.dock_jobs.raise_()
 
     def _open_log_folder(self) -> None:
@@ -781,6 +791,7 @@ class MainWindow(QMainWindow):
                 return
             self.job_runner.cancel_all()
             self.job_runner.wait_for_done(8000)
+        self.actions_["view.fullscreen"].setChecked(False)
         self.controller.save_project()
         self.layouts.save_session()
         self.settings.sync()

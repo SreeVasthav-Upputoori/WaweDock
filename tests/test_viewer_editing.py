@@ -39,10 +39,8 @@ def test_protein_styles_do_not_keep_all_atom_overlay(live_window):
     name = w.controller.source_pdb.stem
     key = json.dumps(name)
     assert wait_until(lambda: bool(js(w.viewer, f"objects[{key}] && objects[{key}].editable")), 10)
-    panel = w.appearance
-    panel.object_combo.setCurrentIndex(panel.object_combo.findData(name))
     for rep in ("ribbon", "backbone", "cartoon", "ribbon"):
-        panel.protein_group.buttons[rep].click()
+        w.viewer.set_representation(name, rep)
         styles = json.loads(js(w.viewer, f"""JSON.stringify((() => {{
             const m = objects[{key}].model;
             return {{rep: objects[{key}].rep,

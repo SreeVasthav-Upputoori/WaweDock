@@ -5,6 +5,7 @@ import logging
 import pytest
 from conftest import wait_until
 from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QDockWidget, QToolBar
 
 from mds.gui.layouts import LayoutManager
 from mds.gui.main_window import MainWindow
@@ -28,6 +29,39 @@ def test_menus_and_docks_exist(window):
                  window.dock_report, window.dock_log, window.dock_jobs):
         assert dock.objectName()
     assert window.windowTitle() == "WaweDock"
+
+
+def test_default_workspace_prioritises_viewer(window):
+    assert window.centralWidget() is window.viewport
+    assert not window.findChildren(QDockWidget, "dockAppearance")
+    assert not window.dock_project.isHidden()
+    assert not window.dock_docking.isHidden()
+    for dock in (window.dock_selection, window.dock_properties, window.dock_results,
+                 window.dock_report, window.dock_log, window.dock_jobs):
+        assert dock.isHidden()
+        assert dock.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        dock.toggleViewAction().trigger()
+        assert not dock.isHidden()
+        dock.toggleViewAction().trigger()
+    assert len(window.findChildren(QToolBar)) == 1
+
+
+def test_molecular_fullscreen_restores_panels_and_maximised_window(window):
+    window.showMaximized()
+    window.dock_selection.show()
+    docks = window.findChildren(QDockWidget)
+    before = {dock.objectName(): dock.isHidden() for dock in docks}
+    window.actions_["view.fullscreen"].setChecked(True)
+    assert window.isFullScreen()
+    assert all(dock.isHidden() for dock in docks)
+    assert window.menuBar().isHidden()
+    assert window.statusBar().isHidden()
+    window.actions_["view.exit_fullscreen"].trigger()
+    assert not window.isFullScreen()
+    assert window.isMaximized()
+    assert not window.menuBar().isHidden()
+    assert not window.statusBar().isHidden()
+    assert before == {dock.objectName(): dock.isHidden() for dock in docks}
 
 
 def test_working_actions_enabled_and_future_ones_labelled(window):

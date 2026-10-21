@@ -14,14 +14,14 @@ class ViewportHost(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("viewportHost")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
 
         self._notice = QLabel(
             "<h2>3D Workspace</h2>"
-            "<p>The embedded molecular viewer is implemented in Phase 2.</p>"
-            "<p>Files dropped here are recorded in the log; import arrives in Phase 3.</p>"
+            "<p>The molecular viewer is unavailable in this session.</p>"
+            "<p>You can still prepare structures and run docking using the menus.</p>"
         )
         self._notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._notice.setEnabled(False)  # renders with the theme's muted text colour

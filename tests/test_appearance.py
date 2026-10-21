@@ -10,7 +10,7 @@ from conftest import wait_until
 from mds.chem.receptor import ReceptorOptions
 from mds.engines import VinaEngine
 from mds.gui.main_window import MainWindow
-from mds.gui.panels.appearance_panel import (MOLECULE_DEFAULT_STYLE, MOLECULE_STYLES,
+from mds.gui.panels.appearance_panel import (AppearancePanel, MOLECULE_DEFAULT_STYLE, MOLECULE_STYLES,
                                              PROTEIN_DEFAULT_STYLE, PROTEIN_STYLES)
 from mds.project import Project
 
@@ -21,6 +21,7 @@ needs_vina = pytest.mark.skipif(not VinaEngine().available(), reason="vina.exe n
 @pytest.fixture
 def window(qapp, settings, tmp_path):
     w = MainWindow(settings, use_viewer=False)
+    w.appearance = AppearancePanel(w.project_explorer, w._viewer_call, w)
     w.controller.set_project(Project.create(tmp_path / "proj"))
     yield w
     w.job_runner.wait_for_done(10000)
