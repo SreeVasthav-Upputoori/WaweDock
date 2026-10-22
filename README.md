@@ -37,6 +37,17 @@ options clears the previous check summary. The check does not rebuild atoms or
 predict pKa; review the prepared receptor as well. Explicit-water retention is not
 yet supported and is now rejected rather than silently ignored.
 
+## Docking-box preview
+
+The box preview follows manual centre/size edits and the selected co-crystal ligand.
+The sidebar reports the number of heavy atoms outside the box, maximum overrun,
+and minimum face clearance for an enclosed reference pose. Amber indicates a
+warning and red a validation error; green means no reported issues. A reference
+with less than 2 A face clearance gets an advisory, not an automatic box change.
+Prepared ligands are checked by size, without treating their arbitrary starting
+coordinates as binding-site poses. Without a positioned reference, the report
+explicitly says containment was not checked.
+
 ## Workspace controls
 
 The molecular viewer occupies the main workspace, with a compact Project Explorer

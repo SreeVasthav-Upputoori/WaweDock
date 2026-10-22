@@ -82,6 +82,7 @@ class Controller(QObject):
         self.entries: list[LigandEntry] = []
         self.prepared: list[PreparedLigand] = []
         self.ligand_options = {"ionize": "none", "n_conformers": 1, "seed": 42}
+        self._box_ligand_path: Path | None = None
         self.box: DockingBox | None = None
         self.reference: Chem.Mol | None = None
         self.reference_name = ""
@@ -158,6 +159,7 @@ class Controller(QObject):
         self.set_project(Project.create(root))
 
     def reset_state(self) -> None:
+        self._box_ligand_path = None
         self.source_pdb, self.receptor, self.box = None, None, None
         self.hetero, self.entries, self.prepared, self.outcomes = [], [], [], []
         self.reference, self.reference_name, self.run_dir = None, "", None
@@ -180,6 +182,7 @@ class Controller(QObject):
             self.error.emit("Cannot open structure", str(exc))
             return
         copy = project.import_original(path)
+        self._box_ligand_path = None
         self.source_pdb = copy
         self.receptor = None
         self._cached_protein_rdkit = None
@@ -299,6 +302,7 @@ class Controller(QObject):
 
     def box_from_hetero(self, hetero: HeteroResidue, padding: float) -> DockingBox:
         assert hetero.extracted_to is not None
+        self._box_ligand_path = hetero.extracted_to
         box = boxlib.box_from_ligand_file(hetero.extracted_to, padding)
         self.set_box(box)
         return box
@@ -317,6 +321,11 @@ class Controller(QObject):
         self.set_box(box)
         return box
 
+    def set_box_reference(self, path: Path | None) -> None:
+        self._box_ligand_path = path
+        if self.box is not None:
+            self.box_changed.emit(self.box)
+
     def validate_box(self) -> Report:
         if self.box is None:
             rep = Report()
@@ -328,7 +337,19 @@ class Controller(QObject):
             extent = max(boxlib.ligand_extent(
                 np.array(Chem.RemoveHs(p.mol).GetConformer().GetPositions())) for p in self.prepared)
         pdbqt = self.receptor.pdbqt if self.receptor else None
-        return boxlib.validate_box(self.box, pdbqt, extent)
+        coords, label = None, "Reference ligand"
+        try:
+            if self._box_ligand_path is not None:
+                coords = boxlib.heavy_atom_coords(self._box_ligand_path)
+                label = f"Co-crystal ligand {self._box_ligand_path.stem}"
+            elif self.reference is not None and self.reference.GetNumConformers():
+                coords = Chem.RemoveHs(self.reference).GetConformer().GetPositions()
+                label = self.reference_name or label
+        except (OSError, ValueError, RuntimeError) as exc:
+            result = boxlib.validate_box(self.box, pdbqt, extent)
+            result.warn(f"Cannot check reference ligand fit: {exc}")
+            return result
+        return boxlib.validate_box(self.box, pdbqt, extent, ligand_coords=coords, ligand_label=label)
 
     # ---------------------------------------------------------- reference
     def set_reference(self, hetero: HeteroResidue | None) -> None:

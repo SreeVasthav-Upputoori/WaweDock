@@ -97,6 +97,8 @@ class DockingPanel(QScrollArea):
         c.ligands_prepared.connect(lambda _o: self._refresh_ligands())
         c.box_changed.connect(self._on_box)
         c.reference_changed.connect(self._on_reference)
+        for signal in (c.receptor_prepared, c.ligands_prepared, c.reference_changed):
+            signal.connect(lambda *_args: self._on_box(self.c.box))
         c.docking_started.connect(lambda: self._set_running(True))
         c.docking_finished.connect(self._on_docking_finished)
         c.runner.job_cancelled.connect(lambda _i: self._on_job_stopped("Cancelled"))
@@ -360,6 +362,7 @@ class DockingPanel(QScrollArea):
         self.site_method.addItems(SITE_METHODS)
         self.site_method.currentIndexChanged.connect(self._site_changed)
         self.site_hetero = QComboBox()
+        self.site_hetero.currentIndexChanged.connect(self._box_reference_changed)
         self.site_hetero.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.site_hetero.setMinimumContentsLength(12)
         self.residues = QLineEdit()
@@ -376,6 +379,7 @@ class DockingPanel(QScrollArea):
         self._updating_box = False
         self.box_status = QLabel("")
         self.box_status.setWordWrap(True)
+        self.box_status.setTextFormat(Qt.TextFormat.PlainText)
         f.addRow("Method", self.site_method)
         f.addRow("Ligand", self.site_hetero)
         f.addRow("Residues", self.residues)
@@ -402,6 +406,10 @@ class DockingPanel(QScrollArea):
         for h in hetero:
             if h.kind == "ligand" and h.extracted_to:
                 self.site_hetero.addItem(f"{h.label} ({h.atoms} atoms)", h)
+
+    def _box_reference_changed(self, *_args) -> None:
+        hetero = self.site_hetero.currentData()
+        self.c.set_box_reference(hetero.extracted_to if hetero else None)
 
     def _make_box(self) -> None:
         m = self.site_method.currentIndex()
@@ -442,7 +450,7 @@ class DockingPanel(QScrollArea):
         self._updating_box = False
         rep = self.c.validate_box()
         icon = {"error": "✖", "warning": "⚠", "info": "ℹ"}
-        self.box_status.setText("<br>".join(f"{icon[e.level.value]} {e.text}" for e in rep.entries))
+        self.box_status.setText("\n".join(f"{icon[e.level.value]} {e.text}" for e in rep.entries))
 
     # ----------------------------------------------------------- 4. docking
     def _docking_group(self) -> QGroupBox:

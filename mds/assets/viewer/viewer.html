@@ -265,10 +265,11 @@ function labelResidues(on) {
 }
 
 // -------- docking box
-function showBox(c, s) {
+function showBox(c, s, status = "ok") {
   clearBox();
-  boxShapes.push(viewer.addBox({center: {x: c[0], y: c[1], z: c[2]}, dimensions: {w: s[0], h: s[1], d: s[2]}, color: "#2ecc71", opacity: 0.12}));
-  boxShapes.push(viewer.addBox({center: {x: c[0], y: c[1], z: c[2]}, dimensions: {w: s[0], h: s[1], d: s[2]}, color: "#27ae60", wireframe: true}));
+  const color = status === "error" ? "#e74c3c" : status === "warning" ? "#f39c12" : "#2ecc71";
+  boxShapes.push(viewer.addBox({center: {x: c[0], y: c[1], z: c[2]}, dimensions: {w: s[0], h: s[1], d: s[2]}, color: color, opacity: 0.12}));
+  boxShapes.push(viewer.addBox({center: {x: c[0], y: c[1], z: c[2]}, dimensions: {w: s[0], h: s[1], d: s[2]}, color: color, wireframe: true}));
   viewer.render();
 }
 function clearBox() { boxShapes.forEach(b => viewer.removeShape(b)); boxShapes = []; viewer.render(); }

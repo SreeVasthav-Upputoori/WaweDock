@@ -153,8 +153,8 @@ class Mol3DViewer(QWebEngineView):
     def clear_residue_selection(self) -> None:
         self._call("clearAround")
 
-    def show_box(self, center, size) -> None:
-        self._call("showBox", list(center), list(size))
+    def show_box(self, center, size, status="ok") -> None:
+        self._call("showBox", list(center), list(size), status)
 
     def clear_box(self) -> None:
         self._call("clearBox")

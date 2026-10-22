@@ -15,6 +15,7 @@ Every dock and toolbar has a stable ``objectName``; Qt needs it to save and rest
 from __future__ import annotations
 
 import logging
+import math
 import os
 import platform
 from pathlib import Path
@@ -412,6 +413,7 @@ class MainWindow(QMainWindow):
         c.receptor_prepared.connect(self._on_receptor_prepared)
         c.ligands_prepared.connect(self._on_ligands_prepared)
         c.box_changed.connect(self._on_box_changed)
+        c.reference_changed.connect(lambda _name: self._on_box_changed(c.box))
         c.docking_finished.connect(self._on_docking_finished)
         c.docking_started.connect(self._sync_docking_actions)
         c.docking_finished.connect(self._sync_docking_actions)
@@ -545,13 +547,22 @@ class MainWindow(QMainWindow):
             if self.viewer:
                 self.viewer.add_object(lig.name, Chem.MolToMolBlock(lig.mol), "sdf", "ligand")
                 self.viewer.set_visible(lig.name, False)
+        if self.controller.box is not None:
+            self._on_box_changed(self.controller.box)
 
     def _on_box_changed(self, box) -> None:
         if box is None:
             self._viewer_call("clear_box")
             self.project_explorer.remove_object("Docking box")
             return
-        self._viewer_call("show_box", box.center, box.size)
+        report = self.controller.validate_box()
+        if (len(box.center) != 3 or len(box.size) != 3 or
+                any(not math.isfinite(value) for value in (*box.center,*box.size)) or
+                any(value <= 0 for value in box.size)):
+            self._viewer_call("clear_box")
+            return
+        status = "error" if report.errors else "warning" if report.warnings else "ok"
+        self._viewer_call("show_box", box.center, box.size, status)
         self.project_explorer.upsert_object("Docking Boxes", "Docking box", {
             "Type": "AutoDock Vina search space", **{k: f"{v:.2f}" for k, v in box.as_dict().items()},
             "Volume (Å³)": f"{box.volume:,.0f}"}, kind="box")
