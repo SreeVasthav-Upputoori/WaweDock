@@ -26,6 +26,17 @@ appear under **Choose another app**). You can also launch directly with
 `python -m mds "C:\path\protein.pdb"`. To repair registration manually, run
 `python -m mds --register-file-associations`.
 
+## Receptor checks
+
+In **Prepare > Receptor Preparation**, use **Check Receptor** before preparing.
+The read-only background check reviews the selected chains for incomplete backbone
+atoms, chain breaks and alternate conformations, and describes water removal,
+metal retention, excluded hetero groups/cofactors and the selected protonation pH.
+Open **Window > Panels > Preparation Report** for full details. Changing preparation
+options clears the previous check summary. The check does not rebuild atoms or
+predict pKa; review the prepared receptor as well. Explicit-water retention is not
+yet supported and is now rejected rather than silently ignored.
+
 ## Workspace controls
 
 The molecular viewer occupies the main workspace, with a compact Project Explorer

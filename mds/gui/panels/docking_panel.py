@@ -90,6 +90,8 @@ class DockingPanel(QScrollArea):
         c.structure_loaded.connect(self._on_structure)
         c.structure_edited.connect(lambda _old, path: self._on_structure(Path(path).stem, path))
         c.receptor_prepared.connect(self._on_receptor)
+        c.receptor_checked.connect(self._on_receptor_check)
+        c.receptor_check_busy.connect(self._set_receptor_check_busy)
         c.hetero_found.connect(self._on_hetero)
         c.ligands_changed.connect(self._refresh_ligands)
         c.ligands_prepared.connect(lambda _o: self._refresh_ligands())
@@ -174,6 +176,7 @@ class DockingPanel(QScrollArea):
                                    if missing else "Ready to dock with the current project inputs.")
 
     def _on_project_changed(self) -> None:
+        self.rec_check.clear()
         self._execution_status = ""
         if self.c.source_pdb is None:
             self.rec_label.setText("No structure loaded (File > Open Structure or Fetch from PDB)")
@@ -198,6 +201,16 @@ class DockingPanel(QScrollArea):
         self.keep_metals.setToolTip("Retain Zn, Mg, Ca, Mn, Fe and Cu ions during receptor preparation.")
         self.keep_metals.setChecked(True)
         self.ph = _spin(4.0, 10.0, 7.4, 0.1)
+        self.check_rec_btn = QPushButton("Check Receptor")
+        self.check_rec_btn.setToolTip("Review selected chains, missing backbone atoms, chain gaps, "
+                                     "alternate conformations, waters, metals and pH without changing the structure.")
+        self.check_rec_btn.clicked.connect(lambda: self.c.inspect_receptor(self._receptor_options()))
+        self.rec_check = QLabel("")
+        self.rec_check.setTextFormat(Qt.TextFormat.PlainText)
+        self.rec_check.setWordWrap(True)
+        self.chains.textChanged.connect(self.rec_check.clear)
+        self.ph.valueChanged.connect(self.rec_check.clear)
+        self.keep_metals.toggled.connect(self.rec_check.clear)
         self.prep_rec_btn = QPushButton("Prepare Receptor")
         self.prep_rec_btn.setToolTip("Remove waters, rebuild missing atoms, assign protonation at the "
                                      "chosen pH (PDB2PQR/PROPKA), build PDBQT (Meeko)")
@@ -208,18 +221,37 @@ class DockingPanel(QScrollArea):
         f.addRow("Chains", self.chains)
         f.addRow(self.keep_metals)
         f.addRow("Protonation pH", self.ph)
+        f.addRow(self.check_rec_btn)
+        f.addRow(self.rec_check)
         f.addRow(self.prep_rec_btn)
         f.addRow(self.rec_status)
         return g
 
     def _prepare_receptor(self) -> None:
         self.show_step(0)
+        self.rec_status.setText("Preparing...")
+        self.c.prepare_receptor(self._receptor_options())
+
+    def _receptor_options(self) -> ReceptorOptions:
         chains = [x.strip() for x in self.chains.text().split(",") if x.strip()] or None
-        self.rec_status.setText("Preparing…")
-        self.c.prepare_receptor(ReceptorOptions(chains=chains, keep_metals=self.keep_metals.isChecked(),
-                                                ph=self.ph.value()))
+        return ReceptorOptions(chains=chains, keep_metals=self.keep_metals.isChecked(), ph=self.ph.value())
+
+    def _set_receptor_check_busy(self, busy: bool) -> None:
+        for widget in (self.check_rec_btn, self.chains, self.ph, self.keep_metals):
+            widget.setEnabled(not busy)
+        if busy:
+            self.rec_check.setText("Checking receptor...")
+        elif self.rec_check.text() == "Checking receptor...":
+            self.rec_check.clear()
+
+    def _on_receptor_check(self, report) -> None:
+        issues = report.errors + report.warnings
+        summary = f"Check: {len(report.errors)} error(s), {len(report.warnings)} warning(s)."
+        self.rec_check.setText(summary + ("\n" + "\n".join(issues[:3]) if issues else "") +
+                               "\nFull details: Window > Panels > Preparation Report.")
 
     def _on_structure(self, name: str, path: str) -> None:
+        self.rec_check.clear()
         self.rec_label.setText(f"Structure: <b>{name}</b> ({Path(path).name})")
         self.rec_status.setText("Not prepared yet")
         self._refresh_steps()

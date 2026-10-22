@@ -133,6 +133,65 @@ def find_chain_breaks(st: gemmi.Structure) -> list[str]:
     return breaks
 
 
+def _check_options(opts: ReceptorOptions, report: Report) -> None:
+    if not math.isfinite(opts.ph) or not 0 <= opts.ph <= 14:
+        report.error("Protonation pH must be finite and between 0 and 14.")
+    if not opts.drop_waters:
+        report.error("Retaining explicit waters is not supported by this receptor pipeline. "
+                     "Use drop_waters=True; waters will not be silently discarded.")
+
+
+def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Report:
+    """Read-only review of the exact chains/options selected for preparation."""
+    opts, rep = options or ReceptorOptions(), Report()
+    _check_options(opts, rep)
+    st = read_structure(Path(source))
+    if len(st) > 1:
+        rep.warn(f"{len(st)} models present; preparation uses only the first model.")
+    available = {ch.name for ch in st[0]}
+    missing = set(opts.chains or []) - available
+    if missing:
+        rep.error(f"Chain(s) {sorted(missing)} not found; available: {sorted(available)}")
+        return rep
+    if opts.chains:
+        for i in reversed(range(len(st[0]))):
+            if st[0][i].name not in opts.chains:
+                del st[0][i]
+    polymer = [(ch.name, r) for ch in st[0] for r in ch if _is_polymer_residue(r)]
+    if not polymer:
+        rep.error("No protein residues in the selected chains.")
+    rep.info("Selected chains: " + ", ".join(ch.name or "(blank)" for ch in st[0]) +
+             f"; {len(polymer)} protein residue(s).")
+    for chain, residue in polymer:
+        label = f"{residue.name} {chain}:{residue.seqid}"
+        absent = [name for name in ("N", "CA", "C", "O") if residue.find_atom(name, "*") is None]
+        if absent:
+            rep.warn(f"Incomplete backbone at {label}: missing {', '.join(absent)}. "
+                     "Preparation may rebuild atoms or remove an unreconstructable residue.")
+        alternatives = sorted({a.altloc for a in residue if a.altloc != "\0"})
+        if alternatives:
+            rep.warn(f"Alternate conformations at {label}: {', '.join(alternatives)}. "
+                     "Preparation keeps the first conformer, not an occupancy-weighted choice.")
+    for line in find_chain_breaks(st):
+        rep.warn(f"Chain break: {line}. Missing segments are not rebuilt.")
+    hetero = classify_hetero(st)
+    waters = sum(h.kind == "water" for h in hetero)
+    rep.info(f"Waters: {waters}; all will be removed for standard Vina preparation.")
+    for h in hetero:
+        if h.kind == "metal":
+            rep.info(f"Metal {h.label}: " + ("retained with a Meeko template." if opts.keep_metals
+                                          else "removed by the selected Keep metal ions setting."))
+        elif h.kind == "ion":
+            rep.warn(f"Ion {h.label}: removed; no supported metal template identified.")
+        elif h.kind == "ligand":
+            rep.warn(f"Hetero group {h.label}: extracted and excluded from the receptor. "
+                     "Review whether it is an essential cofactor before docking.")
+    rep.info(f"Protonation: PDB2PQR/PROPKA will predict states at pH {opts.ph:g}. "
+             "Review binding-site histidines, acids and metal-coordinating residues after preparation. "
+             "This check does not predict pKa or rebuild missing structure.")
+    return rep
+
+
 # ------------------------------------------------------------------ helpers
 def _single_residue_structure(res: gemmi.Residue, chain_name: str) -> gemmi.Structure:
     ns = gemmi.Structure()
@@ -215,6 +274,9 @@ def prepare_receptor(
     """Prepare ``source`` (PDB/mmCIF) and write ``receptor.pdbqt`` into ``out_dir``."""
     opts = options or ReceptorOptions()
     rep = report or Report()
+    _check_options(opts, rep)
+    if rep.errors:
+        raise PreparationError("Invalid receptor preparation options", rep)
     out_dir = Path(out_dir)
     work = out_dir / "work"
     work.mkdir(parents=True, exist_ok=True)
@@ -287,6 +349,9 @@ def prepare_receptor(
                 kept_model.add_chain(tmp_chain)
                 rep.info(f"Metal ion {h.label} retained (parameterised by Meeko).")
                 drop.append(i)  # re-attached after PDB2PQR
+            elif h.kind == "metal":
+                rep.info(f"Metal ion {h.label} removed (Keep metal ions is disabled).")
+                drop.append(i)
             elif h.kind == "ligand":
                 lig_dir.mkdir(parents=True, exist_ok=True)
                 path = lig_dir / f"{h.name}_{h.chain}{h.number}.pdb"

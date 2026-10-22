@@ -12,7 +12,7 @@ from rdkit import Chem
 
 from mds.chem.ligand import LigandEntry, PreparedLigand, prepare_ligand
 from mds.chem.interactions import InteractionResult, compute_interactions, protein_to_rdkit
-from mds.chem.receptor import ReceptorOptions, ReceptorResult, prepare_receptor
+from mds.chem.receptor import ReceptorOptions, ReceptorResult, inspect_receptor, prepare_receptor
 from mds.chem.report import PreparationError, Report
 from mds.chem.similarity import SimilarityResult, cluster, compare_to_reference
 from mds.chem.workflow import DockingParameters, LigandOutcome, run_docking
@@ -46,6 +46,20 @@ class FetchPdbJob(Job):
         path.write_bytes(data)
         ctx.progress(100, "Downloaded")
         return path
+
+
+class InspectReceptorJob(Job):
+    def __init__(self, source: Path, options: ReceptorOptions) -> None:
+        self.source, self.options = Path(source), options
+        self.name = f"Check receptor {self.source.name}"
+
+    def run(self, ctx: JobContext) -> Report:
+        ctx.check_cancelled()
+        ctx.progress(10, "Checking receptor structure and preparation options")
+        result = inspect_receptor(self.source, self.options)
+        ctx.check_cancelled()
+        ctx.progress(100, "Receptor check complete")
+        return result
 
 
 class PrepareReceptorJob(Job):

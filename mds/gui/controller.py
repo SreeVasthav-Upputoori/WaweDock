@@ -23,7 +23,7 @@ from mds.chem.report import PreparationError, Report
 from mds.chem.workflow import DockingParameters, LigandOutcome, results_rows, write_csv
 from mds.jobs import Job, JobRunner
 from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
-                                   PrepareLigandsJob, PrepareReceptorJob, SimilarityJob)
+                                   PrepareLigandsJob, PrepareReceptorJob, InspectReceptorJob, SimilarityJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -56,6 +56,8 @@ class Controller(QObject):
     selection_radius_requested = Signal(float)
     edit_history_changed = Signal(bool, bool)
     editing_view_requested = Signal()
+    receptor_checked = Signal(object)           # read-only Report
+    receptor_check_busy = Signal(bool)
     receptor_prepared = Signal(object)          # ReceptorResult
     ligands_changed = Signal()
     ligands_prepared = Signal(object)           # LigandPrepOutcome
@@ -88,6 +90,7 @@ class Controller(QObject):
         self.run_dir: Path | None = None
         self._callbacks: dict[int, Callable[[object], None]] = {}
         self._docking_job: int | None = None
+        self._receptor_check_job: int | None = None
         self._interaction_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
         self.selection: dict[str, list[dict]] = {}    # object_name -> [{"chain", "resi"}]
@@ -112,7 +115,13 @@ class Controller(QObject):
                 log.exception("Post-processing of job %d failed", job_id)
                 self.error.emit("Error", f"{type(exc).__name__}: {exc}")
 
+    def _finish_receptor_check(self, job_id: int) -> None:
+        if job_id == self._receptor_check_job:
+            self._receptor_check_job = None
+            self.receptor_check_busy.emit(False)
+
     def _job_failed(self, job_id: int, tb: str) -> None:
+        self._finish_receptor_check(job_id)
         if self._callbacks.pop(job_id, None) is None:
             return
         last = tb.strip().splitlines()[-1] if tb.strip() else "unknown error"
@@ -123,6 +132,7 @@ class Controller(QObject):
         self.error.emit(self.runner.name(job_id) + " failed", last)
 
     def _job_cancelled(self, job_id: int) -> None:
+        self._finish_receptor_check(job_id)
         self._callbacks.pop(job_id, None)
         if job_id == self._docking_job:
             self._docking_job = None
@@ -185,6 +195,23 @@ class Controller(QObject):
                      lambda p: self.load_structure(p))  # type: ignore[arg-type]
 
     # -------------------------------------------------------------- receptor
+    def inspect_receptor(self, options: ReceptorOptions) -> None:
+        if self.source_pdb is None:
+            self.error.emit("No structure", "Open a protein structure first.")
+            return
+        if self._receptor_check_job is not None:
+            return
+        source, project = self.source_pdb, self.project
+        def done(result):
+            self._receptor_check_job = None
+            self.receptor_check_busy.emit(False)
+            if self.source_pdb != source or self.project is not project:
+                return
+            self.report.emit("Receptor check", result.render())
+            self.receptor_checked.emit(result)
+        self._receptor_check_job = self._submit(InspectReceptorJob(source, options), done)
+        self.receptor_check_busy.emit(True)
+
     def prepare_receptor(self, options: ReceptorOptions) -> None:
         if self.source_pdb is None:
             self.error.emit("No structure", "Open a PDB/mmCIF structure first (File > Open Structure).")
