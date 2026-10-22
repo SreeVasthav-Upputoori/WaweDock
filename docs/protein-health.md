@@ -1,4 +1,4 @@
-# Protein Health & Repair: diagnostic increment
+# Protein Health & Repair
 
 Open **Docking Setup > Receptor Preparation > Protein Health & Repair**. The existing preparation controls and viewer remain available. The new dock can be collapsed, tabbed, hidden or reopened from Window > Panels.
 
@@ -19,17 +19,41 @@ Optional small crosses mark errors in red, warnings in orange and notes in blue.
 
 Gemmi supplies parsing, entity information and sequence alignment; see its [structure and sequence documentation](https://gemmi.readthedocs.io/en/latest/mol.html). The existing exact atom identity bridge is reused for navigation. Native parser traversal and original atom indices are retained even when an additional TER-aware parse is required to identify segment boundaries.
 
-**Not performed:** Ramachandran/rotamer validation, full ligand stereochemistry, charge/force-field checks, pKa prediction or reconstruction. All findings require review. Input coordinates may themselves be experimental or computational; this module cannot establish their provenance. No coordinates are reconstructed by this increment.
+**Not performed:** Ramachandran/rotamer validation, full ligand stereochemistry, charge/force-field checks, pKa prediction or reconstruction. All findings require review. Input coordinates may themselves be experimental or computational; this module cannot establish their provenance. The diagnostic actions do not reconstruct coordinates. Supported, explicitly selected repairs are described below.
 
 ## Export and lifecycle
 
 Export the JSON report from the dock. It includes source SHA-256, backend/version, findings, exact atom selectors, coverage and limitations. Structure edits, Undo/Redo, new imports and project changes invalidate the report and cancel outdated work. Cancel does not change coordinates. The input is never written by the diagnostics module.
 
-## Following increments
+## Supported automatic and manual repairs
 
-Supported repairs will be added separately, with an explicit selectable change proposal, preserved cofactors/nonstandard components, provenance, before/after checks and the existing Undo history. PDBFixer, OpenMM and Biopython are not installed in the current development environment; no inactive repair buttons or simulated repairs are included. [PDBFixer's documented operations](https://github.com/openmm/pdbfixer/blob/master/Manual.html) provide a reference for evaluating the next repair adapter.
+Install the optional repair backends into the application environment:
 
-Sequence-guided loop reconstruction and restrained refinement require a tested modelling backend plus geometry validation. They must not be represented as successful merely because a backend or minimiser finished. Repaired-structure export belongs to that repair increment; this read-only increment exports validation reports only.
+```powershell
+python -m pip install -e ".[repair]"
+```
+
+The tested development environment uses official PDBFixer 1.12.0, OpenMM 8.6.1 and Biopython 1.88. Without these packages, conformer selection remains functional and the proposal explains why template reconstruction/hydrogens are unavailable. The PyInstaller recipe collects installed repair backends, templates, metadata and OpenMM native libraries. A new executable has not been built or audited by this increment; build it from an environment with the repair extra installed.
+
+1. Click **Repair Protein** to generate a proposal. **Auto Repair** covers the first model's canonical protein residues; **Manual Repair** uses the existing viewer's exact selected residues. Change the scope/pH and click Repair Protein again to refresh the proposal. The right-click **Repair Missing Atoms...** action opens the same manual workflow.
+2. Review the checkboxes. Alternate conformers are separate choices, with the highest mean occupancy recommended; choose only one per residue. Missing side-chain atoms and backbone O can be reconstructed when N/CA/C anchors are present. Hydrogen addition is optional and initially unchecked. No coordinates change at this point.
+3. Click **Build selected repairs**. PDBFixer rebuilds only the selected atom names with seed 42; terminal oxygens, loops and residue replacements are disabled. Existing coordinates are fixed. All original waters, cofactors, metals, ligands, nonstandard residues, other models and PDB CONECT records are preserved in the output. Alternate conformers with explicit connectivity are not modified automatically.
+4. Inspect **Before: original / After: reconstructed**. The original remains loaded; the candidate is a read-only overlay using the same camera and appearance. Reconstructed atoms use thin cyan sticks, subject to the existing component-visibility settings. Ordinary selection stays yellow. The issue report and reconstruction provenance remain available.
+5. **Use repaired structure** activates only an eligible candidate after review, invalidates previous receptor preparation and adds a revision to the existing Undo/Redo history. Blocked candidates cannot be activated or exported as repaired structures. Original files are immutable. Undo restores the previous source; redo restores the candidate and its reconstructed-atom markings.
+
+Hydrogen placement uses Amber14/ff14SB force-field templates, reproducible initialisation (seed 42) and default residue pKas at the selected pH. It is available only for a complete canonical protein without existing protein hydrogens, unresolved internal gaps or missing required terminal OXT. Missing heavy atoms and alternate conformers must be resolved by the selected changes before hydrogens are added. Explicit input disulfides are carried into the backend and their geometry is checked. Non-protein components are excluded from protonation but retained in the output and included in reconstructed-atom contact screening. This does not assign docking charges, predict pKa with PROPKA, or settle metal-site/binding-site protonation. Re-run receptor preparation with appropriate protonation/charge settings before docking.
+
+Native repair computation runs in an isolated worker process with two CPU threads. The interface and molecular viewer remain responsive; cancellation stops the native worker. A stale source/proposal/candidate cannot replace the active structure. An abandoned candidate may remain in the project's prepared/protein_repair folder, but is never activated automatically.
+
+### Geometry gates and uncertainty
+
+The real merged coordinates are re-read and checked, including unchanged identities/coordinates of surviving atoms, selected-residue completeness, reconstructed topology bonds and broad bond-length/angle bounds, severe overlaps with the full retained structure (including hydrogens), and new screening findings in modified regions. Plausible donor-H...acceptor contacts are distinguished from severe overlaps using donor identity, distance and angle. These conservative screens do not replace full stereochemical validation. Failed geometry gates block acceptance even if PDBFixer/minimisation completed. Existing abnormalities elsewhere may remain; accepted candidates are labelled **Review required**, never universally healthy or docking-ready.
+
+### Provenance and exports
+
+**Export repaired structure** writes PDB or mmCIF plus a `.repair.json` sidecar containing backend versions, source/candidate/export SHA-256, selected corrections, per-change status, added/removed atom identities, inherited reconstructed atoms, before/after reports, blockers and warnings. The structure also carries explicit atom-origin annotations (PDB REMARK 950 or a custom mmCIF category). Existing mmCIF metadata categories, including cofactor bond dictionaries, are retained during mmCIF repair. PDB CONECT bonds are represented as standard struct_conn records on mmCIF export; mmCIF component/explicit bonds are represented as CONECT on PDB export. Re-import recognises these annotations; later repair revisions retain prior reconstructed atoms' provenance. Atom origin is never guessed from B factors. PDB export uses standard coordinate precision; prefer mmCIF when preserving additional decimal precision matters.
+
+Loop reconstruction, missing-residue modelling, rebuilding N/CA/C anchors, general selected-region refinement and Ramachandran/rotamer validation remain for the advanced increment. There are no placeholder refinement/reconstruction buttons. See [PDBFixer's documented operations](https://github.com/openmm/pdbfixer/blob/master/Manual.html) and [OpenMM's hydrogen-placement interface](https://docs.openmm.org/latest/api-python/generated/openmm.app.modeller.Modeller.html).
 
 ## Validation record (2026-10-22)
 
@@ -41,3 +65,7 @@ The broader native Windows regression run passed 81 checks and failed two existi
 - `test_results_workspace_displays_selected_pose_and_keeps_viewer_state`: expects the former `pose: ligand B #1` object name instead of the existing stable pose-review object.
 
 These baseline failures were not changed or hidden by this increment.
+
+## Supported-repair validation record (2026-10-22)
+
+The repair increment is covered by 60 focused scientific/native-application checks. These included real PDBFixer missing-atom reconstruction and Amber14 hydrogen placement on 3PTB, preserving every existing atom's coordinates/occupancy/B factor/serial and ligand/water/metal content; preserving CONECT and explicit disulfides; conformer selection; immutable source files; blocked geometry and stale candidate checks; PDB/mmCIF export/re-import; and provenance inherited by later repairs. Native MainWindow/QtWebEngine tests exercised the real worker process with an active GUI heartbeat timer, cancellation, exact manual residue scope, staged comparisons, acceptance, Undo/Redo, source colours/background and narrow panel layouts. Final comparison lifecycle tests also verify scene restoration when the health panel is hidden. Additional export checks verify actual (non-empty) CONECT preservation, both bond-conversion directions and source mmCIF metadata retention. The packaged executable has not been rebuilt or audited in this increment.

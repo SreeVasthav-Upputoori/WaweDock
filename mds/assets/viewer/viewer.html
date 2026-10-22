@@ -99,6 +99,7 @@ function finish(name) {
   reapplyAround();
   Object.values(objects).forEach(applyComponentVisibility);
   refreshObjectLabels(name);
+  applyReconstructed(o);
   refreshHealthIssues();
   reapplySelectionHighlights(false);
   viewer.render();
@@ -115,6 +116,16 @@ function objectAppearance(o) {
   return {rep:o.rep, color:o.color, carbon:o.carbon, customColor:o.customColor,
     originalCarbon:o.originalCarbon, spectrumRange:o.spectrumRange ? o.spectrumRange.slice() : null, components:Object.assign({},o.components), labels:o.labels,
     ligandColor:o.ligandColor ? Object.assign({},o.ligandColor) : null};
+}
+function highlightReconstructed(name, indices) {
+  const o=objects[name]; if (!o) return;
+  o.reconstructedIndices=indices; applyStyle(name);
+}
+function applyReconstructed(o) {
+  if (!o.reconstructedIndices || !o.visible) return;
+  const chosen=new Set(o.reconstructedIndices);
+  viewer.addStyle({model:o.model.getID(),predicate:a=>chosen.has(a.index) && componentVisible(o,a)},
+                   {stick:{radius:0.12,color:'#00d6d6'}});
 }
 function copyObjectAppearance(fromName, toName) {
   if (!objects[fromName] || !objects[toName]) return;

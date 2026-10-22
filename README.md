@@ -10,7 +10,7 @@ Architecture and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 * from PowerShell:
 
 ```powershell
-cd "D:\Tools\Docking tool"
+cd "D:\Tools\WaweDock"
 .\.venv\Scripts\Activate.ps1
 python -m mds
 ```
@@ -278,8 +278,10 @@ protein bond-perception for interaction analysis only. Bundling GPL code into a 
 executable would make that distribution GPL-bound, so it is never included in `wavedock.spec` and
 must be installed separately for that feature to work from source.
 
-## Protein health diagnostics
+## Protein health and repair
 
 Open **Docking Setup > Receptor Preparation > Protein Health & Repair** for an asynchronous, read-only health check, issue navigation in the existing viewer and JSON report export. Checks include canonical heavy-atom completeness, within-segment backbone connectivity, broad geometry/overlap screens, alternate conformers and sequence-backed unmodelled regions. Existing structure colours, selection and preparation remain available.
 
-This is the first diagnostic increment: repairs, loop reconstruction and Ramachandran/rotamer validation are not implemented. Read [coverage, scientific limits and planned repair integration](docs/protein-health.md) before interpreting findings.
+**Repair Protein** now proposes selectable conformer choices, supported missing-atom rebuilding and opt-in hydrogen addition. Build a separate candidate, compare it with the original, then accept it after review. Existing coordinates and non-protein components are retained; Undo/Redo and PDB/mmCIF export with provenance are available. Install backends with `python -m pip install -e ".[repair]"`.
+
+Loop reconstruction, general refinement and Ramachandran/rotamer validation remain for the advanced increment. Read [coverage, repair workflow and scientific limits](docs/protein-health.md) before interpreting findings.

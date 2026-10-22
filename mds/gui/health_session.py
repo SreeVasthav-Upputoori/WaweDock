@@ -1,8 +1,8 @@
-﻿"""Protein health workflow state: job lifecycle stays separate from widgets."""
+"""Protein health workflow state: job lifecycle stays separate from widgets."""
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from mds.jobs.latest import LatestJobQueue
-from mds.jobs.protein_health import ProteinHealthJob
+from mds.jobs.protein_health import ProteinHealthJob, ProteinRepairPlanJob, ProteinRepairJob
 
 
 class ProteinHealthSession(QObject):
@@ -12,6 +12,8 @@ class ProteinHealthSession(QObject):
     progress_changed = Signal(int, str)
     failed = Signal(str)
     cancelled = Signal()
+    plan_ready = Signal(object)
+    candidate_ready = Signal(object)
 
     def __init__(self, runner, source, parent=None):
         super().__init__(parent)
@@ -57,3 +59,27 @@ class ProteinHealthSession(QObject):
     def _failed(self, message):
         self._busy(False)
         self.failed.emit(str(message))
+
+    def propose(self, selected_residues=None, ph=7.4):
+        if self.busy or self.source() is None: return
+        self.invalidated.emit()
+        self._busy(True)
+        try: self.queue.submit(ProteinRepairPlanJob(self.source(),selected_residues,ph),self._plan_done,self._failed)
+        except Exception as exc: self._failed(str(exc))
+
+    def _plan_done(self,plan):
+        self._busy(False)
+        if self.source() is not None and Path(plan.source)==Path(self.source()): self.plan_ready.emit(plan)
+
+    def build(self,plan,selected,output):
+        if self.busy or self.source() is None: return
+        if Path(plan.source)!=Path(self.source()):
+            self.failed.emit('Repair proposal is stale; generate a new preview.')
+            return
+        self._busy(True)
+        try: self.queue.submit(ProteinRepairJob(plan,selected,output),self._candidate_done,self._failed)
+        except Exception as exc: self._failed(str(exc))
+
+    def _candidate_done(self,result):
+        self._busy(False)
+        if self.source() is not None and Path(result.plan.source)==Path(self.source()): self.candidate_ready.emit(result)

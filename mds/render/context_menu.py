@@ -112,6 +112,8 @@ def build_context_menu(viewer, state: dict) -> QMenu:
     highlighted = bool(state.get("focusCount", state.get("selectionCount")))
     if selected and state.get("editable") and hasattr(viewer, "health_inspect_requested"):
         menu.addAction("Inspect Protein Issue", viewer.health_inspect_requested.emit)
+        if hasattr(viewer,"health_repair_requested"):
+            menu.addAction("Repair Missing Atoms...",viewer.health_repair_requested.emit)
     menu.addAction("Focus on Selection", lambda: viewer._call("focusSelection")).setEnabled(highlighted)
     menu.addAction("Clear Selection", viewer.clear_selection).setEnabled(highlighted)
     menu.addAction("Delete Selected Atoms / Residues",

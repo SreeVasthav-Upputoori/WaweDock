@@ -47,6 +47,7 @@ class Mol3DViewer(QWebEngineView):
     ready = Signal()
     edit_requested = Signal(str)
     health_inspect_requested = Signal()
+    health_repair_requested = Signal()
     visibility_changed = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -181,6 +182,9 @@ class Mol3DViewer(QWebEngineView):
     # Selection ---------------------------------------------------------------
     def clear_selection(self) -> None:
         self._call("clearSelection")
+
+    def highlight_reconstructed(self, name: str, indices) -> None:
+        self._call("highlightReconstructed",name,list(indices))
 
     def set_health_issues(self, name: str, issues) -> None:
         colors = {"Error": "#ff4444", "Warning": "#ff9933", "Note": "#33aaff"}

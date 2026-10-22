@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pyinstaller", "pillow"]
+repair = ["pdbfixer==1.12.0", "openmm>=8.2,<9", "biopython>=1.85,<2"]
 # Open Babel is GPL-2.0. It is the bond-perception backend for the "Interactions (ProLIF)"
 # feature (mds/chem/interactions.py) and is kept OPTIONAL and separately installed, never
 # bundled into the distributed .exe (excluded in wavedock.spec), so the distribution is not

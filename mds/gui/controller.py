@@ -100,6 +100,7 @@ class Controller(QObject):
         self._interaction_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
         self.selection: dict[str, list[dict]] = {}    # object_name -> [{"chain", "resi"}]
+        self._repair_revisions = {}
         self._undo_structures: list[Path] = []
         self._redo_structures: list[Path] = []
         runner.job_finished.connect(self._job_finished)
@@ -169,6 +170,7 @@ class Controller(QObject):
         self.set_project(Project.create(root))
 
     def reset_state(self) -> None:
+        self._repair_revisions.clear()
         self.protein_health.invalidate()
         self._contact_queue.clear()
         self._box_geometry.clear()
@@ -580,6 +582,25 @@ class Controller(QObject):
         self.structure_edited.emit(previous.stem if previous else "", str(path))
         self.edit_history_changed.emit(bool(self._undo_structures), bool(self._redo_structures))
         self.save_project()
+
+    def accept_protein_repair(self, result) -> bool:
+        from mds.chem.repair import fingerprint
+        if self.source_pdb is None or self.project is None:
+            return False
+        try:
+            if not result.can_accept or Path(result.plan.source)!=self.source_pdb:
+                raise ValueError("Repair candidate is blocked or belongs to an older structure.")
+            if fingerprint(self.source_pdb)!=result.plan.source_sha256 or fingerprint(result.candidate)!=result.candidate_sha256:
+                raise ValueError("Source or candidate changed; generate a new repair preview.")
+        except (OSError,ValueError) as exc:
+            self.error.emit("Cannot accept protein repair",str(exc))
+            return False
+        self._undo_structures.append(self.source_pdb)
+        self._redo_structures.clear()
+        self._repair_revisions[Path(result.candidate)] = result
+        self._activate_structure(Path(result.candidate))
+        self.message.emit("Repair revision activated. Review reconstructed atoms and prepare the receptor again before docking. Undo is available.")
+        return True
 
     def undo_structure_edit(self) -> None:
         if self._undo_structures and self.source_pdb:

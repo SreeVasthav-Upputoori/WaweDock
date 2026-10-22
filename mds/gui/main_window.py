@@ -93,6 +93,8 @@ class MainWindow(QMainWindow):
         self._pose_object = ""
         self._receptor_objects: list[str] = []
         self._source_object = ""
+        self._repair_preview_visibility = {}
+        self._repair_preview_name = "health: repair preview"
         self._reference_objects: list[str] = []
         self._workspace_mode = 0
         self._modeling_state = None
@@ -410,6 +412,8 @@ class MainWindow(QMainWindow):
         self.docking_panel.protein_health_requested.connect(self._show_protein_health)
         self.health_panel.issue_requested.connect(self._focus_health_issue)
         self.health_panel.highlights_changed.connect(self._health_highlights)
+        self.health_panel.comparison_requested.connect(self._repair_comparison)
+        self.dock_health.visibilityChanged.connect(self._health_visibility)
         ex.item_selected.connect(self._on_item_selected)
         ex.visibility_changed.connect(lambda n, v: self._viewer_call("set_visible", n, v))
         ex.representation_requested.connect(lambda n, r: self._viewer_call("set_representation", n, r))
@@ -450,6 +454,7 @@ class MainWindow(QMainWindow):
             self.viewer.selection_changed.connect(c.set_selection)
             self.viewer.edit_requested.connect(self._on_viewer_edit)
             self.viewer.health_inspect_requested.connect(self._inspect_health_selection)
+            self.viewer.health_repair_requested.connect(self._repair_health_selection)
         self._sync_docking_actions()
 
     def _show_protein_health(self) -> None:
@@ -460,6 +465,48 @@ class MainWindow(QMainWindow):
         self._show_protein_health()
         name = self.controller.source_pdb.stem if self.controller.source_pdb else ""
         self.health_panel.inspect_selection(self.controller.selection.get(name, []))
+
+    def _repair_health_selection(self) -> None:
+        self._show_protein_health()
+        self.health_panel.repair_scope.setCurrentIndex(1)
+        self.health_panel.propose()
+
+    def _health_visibility(self, visible) -> None:
+        if not visible and self._repair_preview_visibility:
+            self.health_panel.comparison.setCurrentIndex(0)
+            self._repair_comparison('clear')
+
+    def _repair_comparison(self, mode) -> None:
+        if not self.viewer: return
+        self.viewer.remove_object(self._repair_preview_name)
+        if mode=='clear':
+            for name,visible in self._repair_preview_visibility.items():
+                self.project_explorer.set_visible(name,visible)
+                self.viewer.set_visible(name,visible)
+            self._repair_preview_visibility.clear()
+            return
+        result=self.health_panel.repair_result
+        if result is None: return
+        if mode=='after' and not self._repair_preview_visibility:
+            names=[self._source_object,*self._receptor_objects]
+            self._repair_preview_visibility={name:self.project_explorer.is_visible(name) for name in names if name}
+        if not self._repair_preview_visibility: return
+        for name in self._repair_preview_visibility:
+            self.project_explorer.set_visible(name,False)
+            self.viewer.set_visible(name,False)
+        if mode=='before':
+            # The comparison is against the exact source being repaired, even if
+            # a prepared receptor had been visible when review was opened.
+            self.project_explorer.set_visible(self._source_object,True)
+            self.viewer.set_visible(self._source_object,True)
+            return
+        import gemmi
+        st=gemmi.read_structure(result.candidate)
+        fmt='cif' if Path(result.candidate).suffix.lower() in ('.cif','.mmcif') else 'pdb'
+        text=st.make_mmcif_document().as_string() if fmt=='cif' else st.make_pdb_string()
+        self.viewer.add_object(self._repair_preview_name,text,fmt,'protein',None,True)
+        self.viewer.copy_appearance(self._source_object,self._repair_preview_name)
+        self.viewer.highlight_reconstructed(self._repair_preview_name,[a['atom_index'] for a in result.added+result.inherited])
 
     def _health_highlights(self, report) -> None:
         if self.viewer:
@@ -535,6 +582,10 @@ class MainWindow(QMainWindow):
                 self.viewer.replace_structure(previous_name, name, text, fmt, atom_records(st))
             else:
                 self.viewer.add_object(name, text, fmt, "protein", atom_records(st), preserve_view)
+        if self.viewer:
+            from mds.chem.repair import reconstructed_atom_indices
+            reconstructed=reconstructed_atom_indices(Path(path),atom_records(st))
+            if reconstructed: self.viewer.highlight_reconstructed(name,reconstructed)
         h = self.controller.hetero
         waters = sum(1 for x in h if x.kind == "water")
         ligs = [x.label for x in h if x.kind == "ligand"]
