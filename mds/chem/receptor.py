@@ -127,7 +127,7 @@ def find_chain_breaks(st: gemmi.Structure) -> list[str]:
                 continue
             if c.pos.dist(n.pos) > 2.0:
                 missing = b.seqid.num - a.seqid.num - 1
-                extra = f" ({missing} residue(s) absent from the model)" if missing > 0 else ""
+                extra = f" (numbering gap of {missing}; missing sequence is unconfirmed)" if missing > 0 else ""
                 breaks.append(f"chain {ch.name}: break between {a.name}{a.seqid.num} and "
                               f"{b.name}{b.seqid.num}{extra}")
     return breaks

@@ -277,3 +277,9 @@ PySide6/Qt (LGPL-3), CCP4 monomer library (LGPL-3).
 protein bond-perception for interaction analysis only. Bundling GPL code into a distributed
 executable would make that distribution GPL-bound, so it is never included in `wavedock.spec` and
 must be installed separately for that feature to work from source.
+
+## Protein health diagnostics
+
+Open **Docking Setup > Receptor Preparation > Protein Health & Repair** for an asynchronous, read-only health check, issue navigation in the existing viewer and JSON report export. Checks include canonical heavy-atom completeness, within-segment backbone connectivity, broad geometry/overlap screens, alternate conformers and sequence-backed unmodelled regions. Existing structure colours, selection and preparation remain available.
+
+This is the first diagnostic increment: repairs, loop reconstruction and Ramachandran/rotamer validation are not implemented. Read [coverage, scientific limits and planned repair integration](docs/protein-health.md) before interpreting findings.

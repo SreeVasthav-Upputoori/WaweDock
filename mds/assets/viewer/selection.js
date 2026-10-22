@@ -434,3 +434,25 @@ container.addEventListener("dblclick", e => {
   e.preventDefault(); e.stopImmediatePropagation();
   pickMolecularSelection(atom._wdObject, atom, e, true);
 }, true);
+
+// Independent, small diagnostic crosses: no molecular restyling or picking changes.
+let healthObject = "", healthMarkers = [], healthShapes = [];
+function setHealthIssues(name, markers) {
+  healthObject = name; healthMarkers = markers || []; refreshHealthIssues(); viewer.render();
+}
+function refreshHealthIssues() {
+  healthShapes.forEach(shape => viewer.removeShape(shape)); healthShapes = [];
+  const o = objects[healthObject]; if (!o || !o.visible) return;
+  const byIndex = new Map();
+  o.model.selectedAtoms({}).forEach(a => {
+    if (a._wdIdentity && componentVisible(o,a)) byIndex.set(a._wdIdentity.atom_index,a);
+  });
+  healthMarkers.forEach(marker => {
+    const atom = byIndex.get(marker.atom_index); if (!atom) return;
+    ["x","y","z"].forEach(axis => {
+      const start = {x:atom.x,y:atom.y,z:atom.z}, end = Object.assign({},start);
+      start[axis] -= 0.35; end[axis] += 0.35;
+      healthShapes.push(viewer.addLine({start,end,color:marker.color,linewidth:2}));
+    });
+  });
+}

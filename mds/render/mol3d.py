@@ -46,6 +46,7 @@ class Mol3DViewer(QWebEngineView):
     selection_changed = Signal(dict, str)       # detail {object: [{chain, resi}, …]}, summary
     ready = Signal()
     edit_requested = Signal(str)
+    health_inspect_requested = Signal()
     visibility_changed = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -180,6 +181,18 @@ class Mol3DViewer(QWebEngineView):
     # Selection ---------------------------------------------------------------
     def clear_selection(self) -> None:
         self._call("clearSelection")
+
+    def set_health_issues(self, name: str, issues) -> None:
+        colors = {"Error": "#ff4444", "Warning": "#ff9933", "Note": "#33aaff"}
+        markers, seen = [], set()
+        # Bound geometry independently of report size. Keep exact editing styles intact.
+        for issue in sorted(issues, key=lambda i: {"Error":0,"Warning":1,"Note":2}.get(i.severity,3)):
+            for atom in issue.atoms:
+                key = (atom["model"], atom["chain_index"], atom["residue_index"])
+                if key in seen or len(markers) >= 250: continue
+                seen.add(key)
+                markers.append({"atom_index": atom["atom_index"], "color": colors.get(issue.severity,"#33aaff")})
+        self._call("setHealthIssues", name, markers)
 
     def set_selection_mode(self, mode: str) -> None:
         self._call("setSelectionMode", mode)

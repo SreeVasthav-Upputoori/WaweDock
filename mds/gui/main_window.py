@@ -41,6 +41,7 @@ from mds.gui.panels.log_panel import LogPanel
 from mds.gui.panels.project_explorer import ProjectExplorer
 from mds.gui.panels.properties_panel import PropertiesPanel
 from mds.gui.panels.selection_panel import SelectionPanel
+from mds.gui.panels.protein_health import ProteinHealthPanel
 from mds.gui.panels.results_panel import ReportPanel, ResultsPanel
 from mds.gui.panels.similarity_dialog import SimilarityDialog
 from mds.gui.status_bar import StudioStatusBar
@@ -119,7 +120,7 @@ class MainWindow(QMainWindow):
         if index == 2:
             if previous != 2 and not self._restoring_workspace:
                 self._modeling_state = self.saveState(LAYOUT_VERSION)
-            for dock in (self.dock_docking, self.dock_selection, self.dock_properties,
+            for dock in (self.dock_docking, self.dock_selection, self.dock_properties, self.dock_health,
                          self.dock_report, self.dock_log, self.dock_jobs):
                 dock.hide()
         elif not self._restoring_workspace:
@@ -226,19 +227,22 @@ class MainWindow(QMainWindow):
         self.dock_project = self._add_dock(self.project_explorer, "Project Explorer", "dockProject", left)
         self.dock_selection = self._add_dock(self.selection_panel, "Selection & Cleanup", "dockSelection", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
+        self.health_panel = ProteinHealthPanel(self.controller)
+        self.dock_health = self._add_dock(self.health_panel, "Protein Health & Repair", "dockProteinHealth", right)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
         self.workspace.set_results(self.results_panel)
         self.dock_report = self._add_dock(self.report_panel, "Preparation Report", "dockReport", bottom)
         self.dock_log = self._add_dock(self.log_panel, "Log", "dockLog", bottom)
         self.dock_jobs = self._add_dock(self.jobs_panel, "Jobs", "dockJobs", bottom)
 
+        self.tabifyDockWidget(self.dock_docking, self.dock_health)
         self.tabifyDockWidget(self.dock_docking, self.dock_properties)
         for a, b in ((self.dock_report, self.dock_log), (self.dock_log, self.dock_jobs)):
             self.tabifyDockWidget(a, b)
         self.dock_docking.raise_()
         self.tabifyDockWidget(self.dock_project, self.dock_selection)
         self.dock_project.raise_()
-        for dock in (self.dock_selection, self.dock_properties,
+        for dock in (self.dock_selection, self.dock_properties, self.dock_health,
                      self.dock_report, self.dock_log, self.dock_jobs):
             dock.hide()
         self.resizeDocks([self.dock_project, self.dock_docking], [220, 340], Qt.Orientation.Horizontal)
@@ -364,7 +368,7 @@ class MainWindow(QMainWindow):
         panels = m.addMenu("&Panels")
         for dock in (self.dock_project, self.dock_docking, self.dock_properties,
                      self.dock_selection, self.dock_report, self.dock_log,
-                     self.dock_jobs):
+                     self.dock_jobs, self.dock_health):
             panels.addAction(dock.toggleViewAction())
         m.addSeparator()
         m.addAction(a["window.save_layout"])
@@ -403,6 +407,9 @@ class MainWindow(QMainWindow):
         self.workspace.workspace_changed.connect(self._on_workspace_changed)
         self.docking_panel.step_activated.connect(self._activate_docking_step)
         self.docking_panel.results_requested.connect(self.actions_["analyse.results"].trigger)
+        self.docking_panel.protein_health_requested.connect(self._show_protein_health)
+        self.health_panel.issue_requested.connect(self._focus_health_issue)
+        self.health_panel.highlights_changed.connect(self._health_highlights)
         ex.item_selected.connect(self._on_item_selected)
         ex.visibility_changed.connect(lambda n, v: self._viewer_call("set_visible", n, v))
         ex.representation_requested.connect(lambda n, r: self._viewer_call("set_representation", n, r))
@@ -442,7 +449,28 @@ class MainWindow(QMainWindow):
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)
             self.viewer.edit_requested.connect(self._on_viewer_edit)
+            self.viewer.health_inspect_requested.connect(self._inspect_health_selection)
         self._sync_docking_actions()
+
+    def _show_protein_health(self) -> None:
+        self.dock_health.show()
+        self.dock_health.raise_()
+
+    def _inspect_health_selection(self) -> None:
+        self._show_protein_health()
+        name = self.controller.source_pdb.stem if self.controller.source_pdb else ""
+        self.health_panel.inspect_selection(self.controller.selection.get(name, []))
+
+    def _health_highlights(self, report) -> None:
+        if self.viewer:
+            self.viewer.set_health_issues(self._source_object, report.issues if report else [])
+
+    def _focus_health_issue(self, issue) -> None:
+        if not issue.atoms or not self.controller.source_pdb or not self.viewer:
+            return
+        self._show_editing_structure()
+        self.viewer.set_selection({self._source_object: issue.atoms})
+        self.viewer._call("focusSelection")
 
     def _sync_docking_actions(self, *_args) -> None:
         running = self.controller.docking_running

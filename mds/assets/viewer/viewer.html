@@ -99,6 +99,7 @@ function finish(name) {
   reapplyAround();
   Object.values(objects).forEach(applyComponentVisibility);
   refreshObjectLabels(name);
+  refreshHealthIssues();
   reapplySelectionHighlights(false);
   viewer.render();
 }
@@ -163,6 +164,7 @@ function replaceStructure(oldName, name, data, fmt, identities) {
   emitSelection();
 }
 function removeObject(name) {
+  if (healthObject === name) setHealthIssues("", []);
   const o = objects[name]; if (!o) return;
   const hadSelection = selection[name] || visualSelection[name];
   if (o.surf !== undefined) viewer.removeSurface(o.surf);
@@ -172,7 +174,7 @@ function removeObject(name) {
   if (hadSelection) { delete selection[name]; if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); if (typeof emitSelection === "function") emitSelection(); }
   viewer.render();
 }
-function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); refreshObjectLabels(name); viewer.render(); } if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
+function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visible = v; if (v) applyStyle(name); else { applyVisibility(name); refreshObjectLabels(name); viewer.render(); } refreshHealthIssues(); if (typeof reapplySelectionHighlights === "function") reapplySelectionHighlights(); }
 function setRepresentation(name, rep) { const o = objects[name]; if (!o) return; o.rep = rep; applyStyle(name); }
 function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.color = c; o.customColor = null; applyStyle(name); }
 function zoomTo(name) { if (name && objects[name]) viewer.zoomTo({model: objects[name].model.getID()}); else viewer.zoomTo(); viewer.render(); }

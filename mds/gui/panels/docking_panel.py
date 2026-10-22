@@ -36,6 +36,7 @@ STEP_TITLES = ("Receptor Preparation", "Ligand Preparation", "Docking Box Config
 class DockingPanel(QScrollArea):
     step_activated = Signal(int)
     results_requested = Signal()
+    protein_health_requested = Signal()
 
     def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -223,6 +224,10 @@ class DockingPanel(QScrollArea):
         f.addRow("Chains", self.chains)
         f.addRow(self.keep_metals)
         f.addRow("Protonation pH", self.ph)
+        self.health_btn = QPushButton("Protein Health & Repair")
+        self.health_btn.setToolTip("Open read-only structural diagnostics and navigate issues in the molecular viewer.")
+        self.health_btn.clicked.connect(self.protein_health_requested.emit)
+        f.addRow(self.health_btn)
         f.addRow(self.check_rec_btn)
         f.addRow(self.rec_check)
         f.addRow(self.prep_rec_btn)

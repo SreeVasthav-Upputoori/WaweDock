@@ -105,6 +105,11 @@ class Controller(QObject):
         runner.job_finished.connect(self._job_finished)
         runner.job_failed.connect(self._job_failed)
         runner.job_cancelled.connect(self._job_cancelled)
+        from mds.gui.health_session import ProteinHealthSession
+        self.protein_health = ProteinHealthSession(runner, lambda: self.source_pdb, self)
+        self.structure_loaded.connect(self.protein_health.invalidate)
+        self.structure_edited.connect(self.protein_health.invalidate)
+        self.project_changed.connect(self.protein_health.invalidate)
 
     # ------------------------------------------------------------------ jobs
     def _submit(self, job: Job, on_done: Callable[[object], None]) -> int:
@@ -164,6 +169,7 @@ class Controller(QObject):
         self.set_project(Project.create(root))
 
     def reset_state(self) -> None:
+        self.protein_health.invalidate()
         self._contact_queue.clear()
         self._box_geometry.clear()
         self._box_ligand_path = None
