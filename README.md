@@ -48,6 +48,16 @@ Prepared ligands are checked by size, without treating their arbitrary starting
 coordinates as binding-site poses. Without a positioned reference, the report
 explicitly says containment was not checked.
 
+## Molecular appearance defaults
+
+New views use a **black viewport** and **sequence-spectrum proteins** (blue at the
+low residue-number end, red at the high end). The rest of the app keeps its current
+UI theme. Atom/HETATM deletion, cleanup, undo and redo preserve the current viewport
+background, camera, representation and colour settings. The spectrum range is kept
+across edits so deleting terminal residues does not recolour the remaining protein.
+When editing switches from a visible prepared receptor to its source, its appearance
+is carried over as well.
+
 ## Pose-by-pose review
 
 In **Results & Analysis**, choose the crystal reference, check **Lock reference**,

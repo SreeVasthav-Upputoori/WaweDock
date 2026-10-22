@@ -58,7 +58,7 @@ class Mol3DViewer(QWebEngineView):
         self._resize_timer.setInterval(80)
         self._resize_timer.timeout.connect(self._sync_viewport)
         self._page = _Page(self)
-        self._page.setBackgroundColor(QColor("white"))
+        self._page.setBackgroundColor(QColor("black"))
         self.setPage(self._page)
         self._page.message.connect(self._on_message)
         # Protocol attributes (callbacks) map onto the Qt signals.
@@ -130,6 +130,12 @@ class Mol3DViewer(QWebEngineView):
     def add_object(self, name: str, data: str, fmt: str, kind: str = "protein", identities=None,
                    preserve_view: bool = False, preserve_style: bool = False) -> None:
         self._call("addObject", name, data, fmt, kind, identities, preserve_view, preserve_style)
+
+    def copy_appearance(self, source: str, target: str) -> None:
+        self._call("copyObjectAppearance", source, target)
+
+    def replace_structure(self, old_name: str, name: str, data: str, fmt: str, identities=None) -> None:
+        self._call("replaceStructure", old_name, name, data, fmt, identities)
 
     def remove_object(self, name: str) -> None:
         self._call("removeObject", name)

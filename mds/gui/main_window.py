@@ -481,11 +481,13 @@ class MainWindow(QMainWindow):
     def _object_props(self, **kw) -> dict:
         return {k: v for k, v in kw.items()}
 
-    def _on_structure_loaded(self, name: str, path: str, *, preserve_view: bool = False) -> None:
+    def _on_structure_loaded(self, name: str, path: str, *, preserve_view: bool = False,
+                             previous_name: str | None = None) -> None:
         import gemmi
         from mds.chem.edit import atom_records
         if self._source_object and self._source_object != name:
-            self._viewer_call("remove_object", self._source_object)
+            if previous_name is None:
+                self._viewer_call("remove_object", self._source_object)
             self.project_explorer.remove_object(self._source_object)
         if not preserve_view:
             for overlay in self._receptor_objects:
@@ -501,22 +503,28 @@ class MainWindow(QMainWindow):
         fmt = "cif" if Path(path).suffix.lower() in (".cif", ".mmcif") else "pdb"
         text = st.make_mmcif_document().as_string() if fmt == "cif" else st.make_pdb_string()
         if self.viewer:
-            self.viewer.add_object(name, text, fmt, "protein", atom_records(st), preserve_view)
+            if previous_name is not None:
+                self.viewer.replace_structure(previous_name, name, text, fmt, atom_records(st))
+            else:
+                self.viewer.add_object(name, text, fmt, "protein", atom_records(st), preserve_view)
         h = self.controller.hetero
         waters = sum(1 for x in h if x.kind == "water")
         ligs = [x.label for x in h if x.kind == "ligand"]
         self.project_explorer.upsert_object("Proteins", name, {
             "Type": "Protein structure (as imported)", "File": Path(path).name,
             "Waters": waters, "Hetero groups": ", ".join(ligs) or "none"}, kind="protein")
-        self._viewer_call("set_background", self.current_theme() is Theme.DARK)
         self.dock_docking.raise_()
         self._refresh_review_references()
         self._apply_pose_review()
 
     def _on_structure_edited(self, name: str, path: str) -> None:
         """Reload the loaded protein after a delete-selection / keep-only edit."""
-        if self.viewer:
-            self.viewer.remove_object(name)
+        if self.viewer and not self.project_explorer.is_visible(name):
+            active = next((n for n in self._receptor_objects
+                           if self.project_explorer.kind_of(n) == "protein" and
+                           self.project_explorer.is_visible(n)), None)
+            if active:
+                self.viewer.copy_appearance(active, name)
         self.project_explorer.remove_object(name)
         # Drop any 'prepared' object we had for the pre-edit structure: it is now stale.
         for prepared_name in self._receptor_objects:
@@ -526,7 +534,7 @@ class MainWindow(QMainWindow):
         self._receptor_objects.clear()
         self._viewer_call("clear_measurements")
         self._viewer_call("clear_residue_selection")
-        self._on_structure_loaded(Path(path).stem, path, preserve_view=True)
+        self._on_structure_loaded(Path(path).stem, path, preserve_view=True, previous_name=name)
         self.dock_selection.show()
         self.dock_selection.raise_()
 
@@ -659,7 +667,6 @@ class MainWindow(QMainWindow):
             apply_theme(app, theme)
         self.settings.setValue("appearance/theme", theme.value)
         self.actions_[f"view.theme.{theme.value}"].setChecked(True)
-        self._viewer_call("set_background", theme is Theme.DARK)
 
     def _toggle_theme(self) -> None:
         self.set_theme(Theme.LIGHT if self.current_theme() is Theme.DARK else Theme.DARK)

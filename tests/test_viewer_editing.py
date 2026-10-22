@@ -129,7 +129,7 @@ def test_selected_cartoon_and_ribbon_are_opaque_yellow_without_extra_shapes(live
         assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style.cartoon.colorscheme") == 'amino'
         assert js(w.viewer, "objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style.cartoon.color === '#ffff00'") is False
         # Restore and verify the original representation's geometry options.
-        js(w.viewer, "setColorScheme('3PTB','chain'); true")
+        js(w.viewer, "setColorScheme('3PTB','spectrum'); true")
         if representation == 'cartoon':
             assert js(w.viewer, "JSON.stringify(objects['3PTB'].model.selectedAtoms({atom:'CA',hetflag:false})[0].style)") == original
 
@@ -704,3 +704,24 @@ def test_full_pose_review_wiring_keeps_reference_and_hidden_protein(live_window,
     assert js(w.viewer,"objects['BEN A:1 (crystal)'].visible")
     bar.hide_protein.setChecked(False)
     assert js(w.viewer,"objects['3PTB (prepared)'].visible && !objects['3PTB'].visible")
+
+
+def test_controller_delete_and_undo_preserve_viewer_colors(live_window):
+    w=live_window
+    w.controller.load_structure(DATA/'3PTB.pdb')
+    old=w.controller.source_pdb.stem
+    js(w.viewer,f"setBackgroundColor('#203040'); setRepresentation({json.dumps(old)},'ribbon'); setCustomColor({json.dumps(old)},'#bada55'); true")
+    camera=js(w.viewer,'JSON.stringify(viewer.getView())')
+    records=atom_records(gemmi.read_structure(str(w.controller.source_pdb)))
+    w.controller.set_selection({old:[r for r in records if r['resn']=='BEN']},'ligand selected')
+    w.controller.delete_selected_residues()
+    name=w.controller.source_pdb.stem
+    assert wait_until(lambda:bool(js(w.viewer,f"!!objects[{json.dumps(name)}]")),10)
+    assert js(w.viewer,'backgroundColor')=='#203040'
+    assert js(w.viewer,f"objects[{json.dumps(name)}].customColor")=='#bada55'
+    assert js(w.viewer,f"objects[{json.dumps(name)}].rep")=='ribbon'
+    assert js(w.viewer,'JSON.stringify(viewer.getView())')==camera
+    w.controller.undo_structure_edit()
+    assert wait_until(lambda:bool(js(w.viewer,f"!!objects[{json.dumps(old)}]")),10)
+    assert js(w.viewer,f"objects[{json.dumps(old)}].customColor")=='#bada55'
+    assert js(w.viewer,'backgroundColor')=='#203040'

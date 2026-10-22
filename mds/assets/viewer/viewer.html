@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #ffffff; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000000; }
   #v { position: absolute; inset: 0; overflow: hidden; }
   #v canvas { display: block; }
 </style>
@@ -18,7 +18,7 @@
 function emit(type, payload) { console.log("WD:" + JSON.stringify({type: type, data: payload})); }
 
 const viewer = $3Dmol.createViewer(document.getElementById("v"),
-                                   {backgroundColor: "white", antialias: true});
+                                   {backgroundColor: "black", antialias: true});
 const objects = {};          // name -> {model, kind, rep, color, visible, surf}
 let aroundSel = [];          // residue-selection styles in effect
 let boxShapes = [];
@@ -36,7 +36,10 @@ function colorSpec(o) {
     case "chain": return {colorscheme: "chain"};
     case "residue": return {colorscheme: "amino"};
     case "secondary structure": return {colorscheme: "ssPyMOL"};
-    case "spectrum": return {color: "spectrum"};
+    case "spectrum": {
+      const range = o.spectrumRange || [0,1];
+      return {colorscheme:{prop:"resi", gradient:new $3Dmol.Gradient.ROYGB(range[1],range[0])}};
+    }
     default: return {color: o.carbon};
   }
 }
@@ -107,19 +110,33 @@ function applyVisibility(name) {
 }
 
 // ------------------------------------------------------------------ public API
+function objectAppearance(o) {
+  return {rep:o.rep, color:o.color, carbon:o.carbon, customColor:o.customColor,
+    originalCarbon:o.originalCarbon, spectrumRange:o.spectrumRange ? o.spectrumRange.slice() : null, components:Object.assign({},o.components), labels:o.labels,
+    ligandColor:o.ligandColor ? Object.assign({},o.ligandColor) : null};
+}
+function copyObjectAppearance(fromName, toName) {
+  if (!objects[fromName] || !objects[toName]) return;
+  Object.assign(objects[toName], objectAppearance(objects[fromName]));
+  applyStyle(toName);
+}
 function addObject(name, data, fmt, kind, identities, preserveView, preserveStyle = false) {
-  const previous = preserveStyle && objects[name];
-  const appearance = previous ? {rep:previous.rep, color:previous.color, carbon:previous.carbon,
-    customColor:previous.customColor, originalCarbon:previous.originalCarbon,
-    components:Object.assign({},previous.components), labels:previous.labels} : null;
+  const appearance = preserveStyle && objects[name] ? objectAppearance(objects[name]) : null;
   const camera = preserveView ? viewer.getView() : null;
   removeObject(name);
   const model = viewer.addAsOneMolecule(data, fmt, {keepH: true, altLoc: "*"});
   const carbon = kind === "protein" ? "#9aa5b1" : CARBON[objectCount++ % CARBON.length];
   const rep = kind === "protein" ? "cartoon" : "sticks";
-  objects[name] = {model: model, kind: kind, rep: rep, color: kind === "protein" ? "chain" : "element",
+  objects[name] = {model: model, kind: kind, rep: rep, color: kind === "protein" ? "spectrum" : "element",
                    visible: true, carbon: carbon, surf: undefined, editable: false,
                    components: {hydrogens: true, waters: true, ligands: true}, labels: labelsOn, objectLabels: []};
+  let low = Infinity, high = -Infinity;
+  model.selectedAtoms({}).forEach(a => {
+    if ((kind !== "protein" || !a.hetflag) && Number.isFinite(a.resi)) {
+      low = Math.min(low,a.resi); high = Math.max(high,a.resi);
+    }
+  });
+  objects[name].spectrumRange = Number.isFinite(low) ? [low,high === low ? low+1 : high] : [0,1];
   if (appearance) Object.assign(objects[name], appearance);
   bindAtomIdentities(name, identities);
   model.setClickable({}, true, function(atom, view, event) {
@@ -131,6 +148,19 @@ function addObject(name, data, fmt, kind, identities, preserveView, preserveStyl
   applyStyle(name);
   if (camera) viewer.setView(camera); else viewer.zoomTo({model: model.getID()});
   viewer.render();
+}
+function replaceStructure(oldName, name, data, fmt, identities) {
+  clearSelectionHighlights();
+  const previous = objects[oldName];
+  delete selection[oldName];
+  delete visualSelection[oldName];
+  if (previous && oldName !== name) {
+    removeObject(name);
+    objects[name] = previous;
+    delete objects[oldName];
+  }
+  addObject(name, data, fmt, "protein", identities, true, true);
+  emitSelection();
 }
 function removeObject(name) {
   const o = objects[name]; if (!o) return;
@@ -150,7 +180,7 @@ function zoomToObjects(names) {
   const models = names.filter(name=>objects[name] && objects[name].visible).map(name=>objects[name].model.getID());
   if (models.length) { viewer.zoomTo({model:models}); viewer.render(); }
 }
-let backgroundColor = "#ffffff";
+let backgroundColor = "#000000";
 function setBackground(dark) { setBackgroundColor(dark ? "#1b1d21" : "#ffffff"); }
 function setBackgroundColor(color) {
   backgroundColor = color;
