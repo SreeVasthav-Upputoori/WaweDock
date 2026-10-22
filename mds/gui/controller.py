@@ -14,16 +14,17 @@ from rdkit import Chem
 
 from mds.chem import box as boxlib
 from mds.chem.box import DockingBox
-from mds.chem.contacts import Contact, load_protein_atoms, pose_contacts
+from mds.chem.contacts import Contact, cached_protein_atoms, pose_contacts
 from mds.chem.interactions import InteractionResult
 from mds.chem.ligand import LigandEntry, PreparedLigand, entry_from_smiles, read_ligands
 from mds.chem.poses import fetch_ccd_template, reference_from_pdb_ligand
 from mds.chem.receptor import HeteroResidue, ReceptorOptions, ReceptorResult, classify_hetero, read_structure
 from mds.chem.report import PreparationError, Report
 from mds.chem.workflow import DockingParameters, LigandOutcome, results_rows, write_csv
+from mds.jobs.latest import LatestJobQueue
 from mds.jobs import Job, JobRunner
 from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
-                                   PrepareLigandsJob, PrepareReceptorJob, InspectReceptorJob, SimilarityJob)
+                                   PrepareLigandsJob, PrepareReceptorJob, InspectReceptorJob, ContactsJob, SimilarityJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -65,6 +66,8 @@ class Controller(QObject):
     reference_changed = Signal(str)             # name or ""
     docking_started = Signal()
     docking_finished = Signal(list)             # list[LigandOutcome]
+    contacts_ready = Signal(object, int, object)
+    contacts_failed = Signal(object, int, str)
     interactions_started = Signal()
     interactions_ready = Signal(object, int, object)   # LigandOutcome, pose index, InteractionResult
     similarity_ready = Signal(object)            # SimilarityResult
@@ -75,6 +78,8 @@ class Controller(QObject):
     def __init__(self, runner: JobRunner, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.runner = runner
+        self._contact_queue = LatestJobQueue(runner, self)
+        self._box_geometry = boxlib.BoxGeometryCache()
         self.project: Project | None = None
         self.source_pdb: Path | None = None
         self.hetero: list[HeteroResidue] = []
@@ -159,6 +164,8 @@ class Controller(QObject):
         self.set_project(Project.create(root))
 
     def reset_state(self) -> None:
+        self._contact_queue.clear()
+        self._box_geometry.clear()
         self._box_ligand_path = None
         self.source_pdb, self.receptor, self.box = None, None, None
         self.hetero, self.entries, self.prepared, self.outcomes = [], [], [], []
@@ -182,6 +189,8 @@ class Controller(QObject):
             self.error.emit("Cannot open structure", str(exc))
             return
         copy = project.import_original(path)
+        self._contact_queue.clear()
+        self._box_geometry.clear()
         self._box_ligand_path = None
         self.source_pdb = copy
         self.receptor = None
@@ -226,6 +235,8 @@ class Controller(QObject):
                      lambda result: self._receptor_done(result) if self.source_pdb == source else None)
 
     def _receptor_done(self, result: ReceptorResult) -> None:
+        self._contact_queue.clear()
+        self._cached_protein_rdkit = None
         self.receptor = result
         self.hetero = result.hetero or self.hetero
         self.report.emit("Receptor preparation", result.report.render())
@@ -334,22 +345,25 @@ class Controller(QObject):
         extent = None
         if self.prepared:
             import numpy as np
-            extent = max(boxlib.ligand_extent(
-                np.array(Chem.RemoveHs(p.mol).GetConformer().GetPositions())) for p in self.prepared)
+            extent = max(self._box_geometry.extent(
+                np.asarray(p.mol.GetConformer().GetPositions())[
+                    [a.GetAtomicNum() != 1 for a in p.mol.GetAtoms()]]) for p in self.prepared)
         pdbqt = self.receptor.pdbqt if self.receptor else None
+        receptor_xyz = self._box_geometry.file_coords(pdbqt) if pdbqt else None
         coords, label = None, "Reference ligand"
         try:
             if self._box_ligand_path is not None:
-                coords = boxlib.heavy_atom_coords(self._box_ligand_path)
+                coords = self._box_geometry.file_coords(self._box_ligand_path, ligand=True)
                 label = f"Co-crystal ligand {self._box_ligand_path.stem}"
             elif self.reference is not None and self.reference.GetNumConformers():
                 coords = Chem.RemoveHs(self.reference).GetConformer().GetPositions()
                 label = self.reference_name or label
         except (OSError, ValueError, RuntimeError) as exc:
-            result = boxlib.validate_box(self.box, pdbqt, extent)
+            result = boxlib.validate_box(self.box, ligand_extent=extent, receptor_xyz=receptor_xyz)
             result.warn(f"Cannot check reference ligand fit: {exc}")
             return result
-        return boxlib.validate_box(self.box, pdbqt, extent, ligand_coords=coords, ligand_label=label)
+        return boxlib.validate_box(self.box, ligand_extent=extent, ligand_coords=coords,
+                                   ligand_label=label, receptor_xyz=receptor_xyz)
 
     # ---------------------------------------------------------- reference
     def set_reference(self, hetero: HeteroResidue | None) -> None:
@@ -433,8 +447,33 @@ class Controller(QObject):
     def contacts_for(self, outcome: LigandOutcome, pose_index: int) -> list[Contact]:
         if self.receptor is None:
             return []
-        atoms = load_protein_atoms(self.receptor.prepared_pdb)
+        atoms = cached_protein_atoms(self.receptor.prepared_pdb)
         return pose_contacts(outcome.mols[pose_index], atoms)
+
+    def request_contacts(self, outcome: LigandOutcome, pose_index: int) -> None:
+        if self.receptor is None:
+            self._contact_queue.clear()
+            self.contacts_ready.emit(outcome, pose_index, [])
+            return
+        receptor, project = self.receptor, self.project
+        source = receptor.prepared_pdb
+
+        def current():
+            return self.project is project and self.receptor is receptor
+
+        def done(contacts):
+            if current():
+                self.contacts_ready.emit(outcome, pose_index, contacts)
+
+        def failed(message):
+            if current():
+                lines = message.strip().splitlines()
+                self.contacts_failed.emit(outcome, pose_index, lines[-1] if lines else "Unknown error")
+
+        self._contact_queue.submit(ContactsJob(source, outcome.mols[pose_index]), done, failed)
+
+    def clear_contact_requests(self) -> None:
+        self._contact_queue.clear()
 
     def analyze_interactions(self, outcome: LigandOutcome, pose_index: int) -> None:
         """ProLIF interaction fingerprint + 2D diagram for one pose, run in the background.

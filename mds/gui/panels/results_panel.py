@@ -151,6 +151,8 @@ class ResultsPanel(QWidget):
     def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.c = controller
+        controller.contacts_ready.connect(self._contacts_ready)
+        controller.contacts_failed.connect(self._contacts_failed)
         self._rows: list[tuple[LigandOutcome, int]] = []
         self._current_pose = None
 
@@ -167,6 +169,9 @@ class ResultsPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.currentCellChanged.connect(lambda *_args: self._selection_changed())
 
+        self.contact_status=QLabel("Select a pose to preview contacts.")
+        self.contact_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.contact_status.setWordWrap(True)
         self.contacts = QTableWidget(0, 3)
         self.contacts.setHorizontalHeaderLabels(["Residue", "Min. distance (Å)", "Distance-based candidates"])
         self.contacts.verticalHeader().hide()
@@ -179,6 +184,7 @@ class ResultsPanel(QWidget):
         contact_box = QWidget()
         cl = QVBoxLayout(contact_box)
         cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self.contact_status)
         cl.addWidget(self.contacts)
         cl.addWidget(caveat)
 
@@ -326,6 +332,8 @@ class ResultsPanel(QWidget):
                 self.comparison.setItem(target, col, QTableWidgetItem(self.table.item(source, col).text()))
         if not rows:
             self._current_pose = None
+            self.c.clear_contact_requests()
+            self.contact_status.setText("Select a pose to preview contacts.")
             self.contacts.setRowCount(0)
             self.interactions_panel.clear_pose()
             self.pose_cleared.emit()
@@ -341,18 +349,32 @@ class ResultsPanel(QWidget):
         self.interactions_panel.set_pose(outcome, pose_i)
         self.pose_selected.emit(outcome, pose_i)
 
-    def _show_contacts(self, outcome: LigandOutcome, pose_i: int) -> None:
-        try:
-            contacts = self.c.contacts_for(outcome, pose_i)
-        except Exception as exc:  # noqa: BLE001
-            self.contacts.setRowCount(0)
-            self.summary.setText(f"Contact analysis unavailable: {exc}")
+    def _show_contacts(self, outcome:LigandOutcome,pose_i:int) -> None:
+        self.contacts.setRowCount(0)
+        self.contact_status.setText("Loading contacts...")
+        self.contacts.setToolTip("Loading contact preview...")
+        self.c.request_contacts(outcome,pose_i)
+
+    def _contacts_ready(self,outcome,pose_i,contacts) -> None:
+        if self._current_pose is None or self._current_pose[0] is not outcome or self._current_pose[1]!=pose_i:
             return
-        self.contacts.setRowCount(len(contacts))
-        for r, c in enumerate(contacts):
-            self.contacts.setItem(r, 0, QTableWidgetItem(c.residue))
-            self.contacts.setItem(r, 1, QTableWidgetItem(f"{c.min_distance:.2f}"))
-            self.contacts.setItem(r, 2, QTableWidgetItem("; ".join(c.candidates)))
+        self.contact_status.setText(f"{len(contacts)} contacting residue(s)." if self.c.receptor is not None
+                                    else "Prepare a receptor to preview contacts.")
+        self.contacts.setToolTip(CAVEAT)
+        self.contacts.setUpdatesEnabled(False)
+        try:
+            self.contacts.setRowCount(len(contacts))
+            for row,contact in enumerate(contacts):
+                self.contacts.setItem(row,0,QTableWidgetItem(contact.residue))
+                self.contacts.setItem(row,1,QTableWidgetItem(f"{contact.min_distance:.2f}"))
+                self.contacts.setItem(row,2,QTableWidgetItem("; ".join(contact.candidates)))
+        finally:
+            self.contacts.setUpdatesEnabled(True)
+
+    def _contacts_failed(self,outcome,pose_i,message) -> None:
+        if self._current_pose is not None and self._current_pose[0] is outcome and self._current_pose[1]==pose_i:
+            self.contact_status.setText(f"Contact preview unavailable: {message}")
+            self.contacts.setToolTip(f"Contact preview unavailable: {message}")
 
     def _export(self, fmt: str) -> None:
         if not self.c.outcomes:

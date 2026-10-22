@@ -48,6 +48,21 @@ class FetchPdbJob(Job):
         return path
 
 
+class ContactsJob(Job):
+    def __init__(self, source: Path, pose) -> None:
+        self.source, self.pose = Path(source), pose
+        self.name = "Pose contact preview"
+
+    def run(self, ctx: JobContext):
+        from mds.chem.contacts import cached_protein_atoms, pose_contacts
+        ctx.check_cancelled()
+        protein = cached_protein_atoms(self.source)
+        ctx.check_cancelled()
+        result = pose_contacts(self.pose, protein)
+        ctx.check_cancelled()
+        return result
+
+
 class InspectReceptorJob(Job):
     def __init__(self, source: Path, options: ReceptorOptions) -> None:
         self.source, self.options = Path(source), options

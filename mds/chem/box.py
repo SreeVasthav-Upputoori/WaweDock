@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,7 +95,8 @@ def blind_box(receptor_pdb: Path, padding: float = 4.0) -> DockingBox:
 def validate_box(box: DockingBox, receptor_pdbqt: Path | None = None,
                  ligand_extent: float | None = None, *,
                  ligand_coords: np.ndarray | None = None,
-                 ligand_label: str = "Reference ligand") -> Report:
+                 ligand_label: str = "Reference ligand",
+                 receptor_xyz: np.ndarray | None = None) -> Report:
     """Check the box for physical sense and report advisories (never silently altered)."""
     rep = Report()
     if len(box.center) != 3 or len(box.size) != 3 or not np.isfinite((*box.center, *box.size)).all():
@@ -136,8 +138,8 @@ def validate_box(box: DockingBox, receptor_pdbqt: Path | None = None,
     else:
         rep.info("No positioned reference ligand selected; pose containment is not checked. "
                  "Prepared ligand sizes, when available, are checked independently.")
-    if receptor_pdbqt is not None:
-        xyz = receptor_atom_coords(receptor_pdbqt)
+    if receptor_pdbqt is not None or receptor_xyz is not None:
+        xyz = receptor_atom_coords(receptor_pdbqt) if receptor_xyz is None else receptor_xyz
         inside = int(box.contains(xyz).sum())
         if inside == 0:
             rep.error("The box contains no receptor atoms; it does not overlap the protein at all.")
@@ -156,7 +158,56 @@ def receptor_atom_coords(pdbqt: Path) -> np.ndarray:
 
 def ligand_extent(coords: np.ndarray) -> float:
     """Largest pairwise distance between ligand atoms."""
-    coords = np.asarray(coords)
-    d = np.linalg.norm(coords[:, None, :] - coords[None, :, :], axis=-1)
-    return float(d.max())
+    coords = np.asarray(coords,dtype=float)
+    if coords.ndim != 2 or coords.shape[1] != 3 or not len(coords) or not np.isfinite(coords).all():
+        raise ValueError("ligand coordinates must be a finite nonempty (N,3) array")
+    maximum = 0.0
+    # Bound temporary memory for large ligands; the geometric result is unchanged.
+    for start in range(0,len(coords),128):
+        delta=coords[start:start+128,None,:]-coords[None,:,:]
+        maximum=max(maximum,float(np.einsum('ijk,ijk->ij',delta,delta).max()))
+    return float(np.sqrt(maximum))
 
+
+class BoxGeometryCache:
+    """Bounded immutable geometry snapshots; changed files/coordinates invalidate hits."""
+    def __init__(self, max_entries: int = 8, max_extents: int = 256):
+        if max_entries < 1 or max_extents < 1:
+            raise ValueError("cache limits must be positive")
+        self.max_entries=max_entries
+        self.max_extents=max_extents
+        self.files=OrderedDict()
+        self.extents=OrderedDict()
+
+    def clear(self):
+        self.files.clear()
+        self.extents.clear()
+
+    def _remember(self, cache, key, value, limit):
+        cache[key]=value
+        cache.move_to_end(key)
+        while len(cache)>limit:
+            cache.popitem(last=False)
+        return value
+
+    def file_coords(self,path:Path,*,ligand:bool=False) -> np.ndarray:
+        path=Path(path).resolve()
+        stat=path.stat()
+        key=(str(path),ligand,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+        if key in self.files:
+            self.files.move_to_end(key)
+            return self.files[key]
+        coords=heavy_atom_coords(path) if ligand else receptor_atom_coords(path)
+        coords.setflags(write=False)
+        # Keep only the current snapshot of each path/type.
+        for old in list(self.files):
+            if old[:2]==key[:2]: del self.files[old]
+        return self._remember(self.files,key,coords,self.max_entries)
+
+    def extent(self,coords:np.ndarray) -> float:
+        coords=np.ascontiguousarray(coords,dtype=float)
+        key=(coords.shape,coords.tobytes())
+        if key in self.extents:
+            self.extents.move_to_end(key)
+            return self.extents[key]
+        return self._remember(self.extents,key,ligand_extent(coords),self.max_extents)

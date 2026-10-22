@@ -48,6 +48,18 @@ Prepared ligands are checked by size, without treating their arbitrary starting
 coordinates as binding-site poses. Without a positioned reference, the report
 explicitly says containment was not checked.
 
+## Responsiveness
+
+Box validation reuses unchanged protein/reference coordinates and ligand dimensions;
+file rewrites and coordinate changes invalidate the cached values. Contact previews
+run in the background. Rapid pose changes keep only the latest queued request, and
+late results cannot replace the currently selected pose's contacts. Protein contact
+geometry is cached, with spatial preprocessing and bounded distance blocks to avoid
+large temporary arrays. These optimizations preserve the existing distance criteria.
+
+Developers can reproduce the box/contact timings with
+`python tools/benchmark_responsiveness.py` from a source checkout.
+
 ## Workspace controls
 
 The molecular viewer occupies the main workspace, with a compact Project Explorer
