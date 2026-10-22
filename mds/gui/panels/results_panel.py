@@ -17,6 +17,7 @@ from mds.chem.workflow import LigandOutcome, SCORE_DISCLAIMER
 from mds.core.paths import assets_dir
 from mds.gui.controller import Controller
 from mds.gui.panels.score_chart import ScoreChart
+from mds.gui.panels.pose_review import PoseReviewBar
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
 
@@ -155,6 +156,8 @@ class ResultsPanel(QWidget):
         controller.contacts_failed.connect(self._contacts_failed)
         self._rows: list[tuple[LigandOutcome, int]] = []
         self._current_pose = None
+        self.review_bar = PoseReviewBar(self)
+        self.review_bar.step_requested.connect(self._step_pose)
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -241,6 +244,7 @@ class ResultsPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self.summary)
         layout.addLayout(buttons)
+        layout.addWidget(self.review_bar)
         layout.addWidget(self.match_count)
         layout.addWidget(self.splitter, 1)
         layout.addWidget(disclaimer)
@@ -323,6 +327,16 @@ class ResultsPanel(QWidget):
                 self.table.scrollToItem(self.table.item(row, 0))
                 return
 
+    def _step_pose(self, direction: int) -> None:
+        rows = [row for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)]
+        if not rows:
+            return
+        current = self.table.currentRow()
+        index = rows.index(current) if current in rows else 0
+        target = max(0, min(len(rows)-1, index+direction))
+        self.table.selectRow(rows[target])
+        self.table.scrollToItem(self.table.item(rows[target],0))
+
     def _selection_changed(self) -> None:
         rows = [index.row() for index in self.table.selectionModel().selectedRows()
                 if not self.table.isRowHidden(index.row())]
@@ -331,6 +345,7 @@ class ResultsPanel(QWidget):
             for col in range(len(COLUMNS)):
                 self.comparison.setItem(target, col, QTableWidgetItem(self.table.item(source, col).text()))
         if not rows:
+            self.review_bar.set_position(-1, sum(not self.table.isRowHidden(r) for r in range(self.table.rowCount())))
             self._current_pose = None
             self.c.clear_contact_requests()
             self.contact_status.setText("Select a pose to preview contacts.")
@@ -340,6 +355,8 @@ class ResultsPanel(QWidget):
             return
         row = self.table.currentRow()
         row = row if row in rows else rows[0]
+        visible_rows = [r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)]
+        self.review_bar.set_position(visible_rows.index(row), len(visible_rows))
         idx = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         outcome, pose_i = self._rows[idx]
         if self._current_pose is not None and self._current_pose[0] is outcome and self._current_pose[1] == pose_i:

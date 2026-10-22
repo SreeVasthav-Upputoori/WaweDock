@@ -107,7 +107,11 @@ function applyVisibility(name) {
 }
 
 // ------------------------------------------------------------------ public API
-function addObject(name, data, fmt, kind, identities, preserveView) {
+function addObject(name, data, fmt, kind, identities, preserveView, preserveStyle = false) {
+  const previous = preserveStyle && objects[name];
+  const appearance = previous ? {rep:previous.rep, color:previous.color, carbon:previous.carbon,
+    customColor:previous.customColor, originalCarbon:previous.originalCarbon,
+    components:Object.assign({},previous.components), labels:previous.labels} : null;
   const camera = preserveView ? viewer.getView() : null;
   removeObject(name);
   const model = viewer.addAsOneMolecule(data, fmt, {keepH: true, altLoc: "*"});
@@ -116,6 +120,7 @@ function addObject(name, data, fmt, kind, identities, preserveView) {
   objects[name] = {model: model, kind: kind, rep: rep, color: kind === "protein" ? "chain" : "element",
                    visible: true, carbon: carbon, surf: undefined, editable: false,
                    components: {hydrogens: true, waters: true, ligands: true}, labels: labelsOn, objectLabels: []};
+  if (appearance) Object.assign(objects[name], appearance);
   bindAtomIdentities(name, identities);
   model.setClickable({}, true, function(atom, view, event) {
     const e = event && (event.originalEvent || event) || {};
@@ -141,6 +146,10 @@ function setVisible(name, v) { const o = objects[name]; if (!o) return; o.visibl
 function setRepresentation(name, rep) { const o = objects[name]; if (!o) return; o.rep = rep; applyStyle(name); }
 function setColorScheme(name, c) { const o = objects[name]; if (!o) return; o.color = c; o.customColor = null; applyStyle(name); }
 function zoomTo(name) { if (name && objects[name]) viewer.zoomTo({model: objects[name].model.getID()}); else viewer.zoomTo(); viewer.render(); }
+function zoomToObjects(names) {
+  const models = names.filter(name=>objects[name] && objects[name].visible).map(name=>objects[name].model.getID());
+  if (models.length) { viewer.zoomTo({model:models}); viewer.render(); }
+}
 let backgroundColor = "#ffffff";
 function setBackground(dark) { setBackgroundColor(dark ? "#1b1d21" : "#ffffff"); }
 function setBackgroundColor(color) {

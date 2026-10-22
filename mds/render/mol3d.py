@@ -128,8 +128,8 @@ class Mol3DViewer(QWebEngineView):
 
     # ------------------------------------------------------------ ViewerBackend
     def add_object(self, name: str, data: str, fmt: str, kind: str = "protein", identities=None,
-                   preserve_view: bool = False) -> None:
-        self._call("addObject", name, data, fmt, kind, identities, preserve_view)
+                   preserve_view: bool = False, preserve_style: bool = False) -> None:
+        self._call("addObject", name, data, fmt, kind, identities, preserve_view, preserve_style)
 
     def remove_object(self, name: str) -> None:
         self._call("removeObject", name)

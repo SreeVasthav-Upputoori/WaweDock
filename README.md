@@ -48,6 +48,19 @@ Prepared ligands are checked by size, without treating their arbitrary starting
 coordinates as binding-site poses. Without a positioned reference, the report
 explicitly says containment was not checked.
 
+## Pose-by-pose review
+
+In **Results & Analysis**, choose the crystal reference, check **Lock reference**,
+and check **Hide protein**. Use **Fit view** once, then **Previous / Next** or the
+pose table to browse. The reference keeps its coordinates and stays visible;
+protein objects are hidden without deletion and return to their prior visibility
+when unchecked. **Keep camera** is on by default and enforced while the reference
+is locked. Docked pose colours and representation carry across pose changes.
+Navigation follows the current table sort/filter. Fit View never realigns atoms.
+
+The [one-job pose-review audit](docs/audits/2026-10-22-pose-review.md) records what
+was exercised and the remaining RDKit-related integration-test limitation.
+
 ## Responsiveness
 
 Box validation reuses unchanged protein/reference coordinates and ligand dimensions;

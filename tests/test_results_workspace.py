@@ -199,3 +199,23 @@ def test_session_and_named_layout_restore_workspace(qapp, tmp_path):
         assert not second.dock_selection.isHidden()
     finally:
         second.close()
+
+
+def test_review_navigation_follows_filtered_sorted_pose_rows(panel):
+    bar=panel.review_bar
+    assert bar.position.text()=='1 / 3'
+    bar.next.click()
+    assert panel._current_pose[0].name=='ligand A'
+    assert bar.position.text()=='2 / 3'
+    panel.search.setText('ligand A')
+    panel.table.sortItems(2,Qt.SortOrder.DescendingOrder)
+    panel.select_pose(panel.c.outcomes[0],1)
+    assert bar.position.text().endswith('/ 3')  # select_pose clears the search
+    panel.search.setText('ligand A')
+    panel.table.selectRow(next(r for r in range(panel.table.rowCount()) if not panel.table.isRowHidden(r)))
+    assert bar.position.text()=='1 / 2'
+    bar.next.click()
+    assert bar.position.text()=='2 / 2'
+    assert not bar.next.isEnabled()
+    bar.previous.click()
+    assert bar.position.text()=='1 / 2'

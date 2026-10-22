@@ -50,6 +50,7 @@ from mds.gui.workspaces import WorkspaceHost
 from mds.jobs import JobRunner
 from mds.jobs.diagnostics import JobSystemSelfTest
 from mds.project import Project
+from mds.render.pose_review import PoseReviewSession
 
 log = logging.getLogger("mds.gui")
 
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
         self._pose_object = ""
         self._receptor_objects: list[str] = []
         self._source_object = ""
+        self._reference_objects: list[str] = []
         self._workspace_mode = 0
         self._modeling_state = None
         self._restoring_workspace = False
@@ -98,6 +100,7 @@ class MainWindow(QMainWindow):
         self._similarity_dialog: SimilarityDialog | None = None
 
         self._build_central(use_viewer)
+        self._pose_review = PoseReviewSession(self.viewer) if self.viewer is not None else None
         self._build_status_bar()
         self._build_docks()
         self._build_actions()
@@ -178,6 +181,9 @@ class MainWindow(QMainWindow):
         if self._pose_object:
             self._viewer_call("clear_residue_selection")
             self._viewer_call("remove_object", self._pose_object)
+            self.project_explorer.remove_object(self._pose_object)
+            if self._pose_review is not None:
+                self._pose_review.has_pose = False
             self._pose_object = ""
 
     # ================================================================ build
@@ -428,8 +434,10 @@ class MainWindow(QMainWindow):
         c.selection_cleared.connect(lambda: self._viewer_call("clear_selection"))
         self.results_panel.pose_selected.connect(self._show_pose)
         self.results_panel.pose_cleared.connect(self._clear_pose)
+        self.results_panel.review_bar.settings_changed.connect(self._apply_pose_review)
+        self.results_panel.review_bar.fit_requested.connect(self._fit_pose_review)
         if self.viewer is not None:
-            self.viewer.visibility_changed.connect(ex.set_visible)
+            self.viewer.visibility_changed.connect(self._review_visibility_changed)
             self.viewer.atom_info.connect(self.status.set_selection)
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)
@@ -484,6 +492,8 @@ class MainWindow(QMainWindow):
                 self._viewer_call("remove_object", overlay)
                 self.project_explorer.remove_object(overlay)
             self._receptor_objects.clear()
+            self._reference_objects.clear()
+            self.results_panel.review_bar.set_references([])
         self._source_object = name
         st = gemmi.read_structure(path)
         # One canonical representation for PDB and mmCIF. Keep every model, chain,
@@ -500,6 +510,8 @@ class MainWindow(QMainWindow):
             "Waters": waters, "Hetero groups": ", ".join(ligs) or "none"}, kind="protein")
         self._viewer_call("set_background", self.current_theme() is Theme.DARK)
         self.dock_docking.raise_()
+        self._refresh_review_references()
+        self._apply_pose_review()
 
     def _on_structure_edited(self, name: str, path: str) -> None:
         """Reload the loaded protein after a delete-selection / keep-only edit."""
@@ -534,9 +546,13 @@ class MainWindow(QMainWindow):
             if h.kind == "ligand" and h.extracted_to and self.viewer:
                 label = f"{h.label} (crystal)"
                 self._receptor_objects.append(label)
+                if label not in self._reference_objects:
+                    self._reference_objects.append(label)
                 self.viewer.add_object(label, h.extracted_to.read_text(), "pdb", "ligand")
                 self.project_explorer.upsert_object("Ligands", label, {
                     "Type": "Co-crystal ligand (extracted)", "Atoms": h.atoms}, kind="ligand")
+        self._refresh_review_references()
+        self._apply_pose_review()
         if self.controller.box:
             self._on_box_changed(self.controller.box)
 
@@ -568,7 +584,10 @@ class MainWindow(QMainWindow):
             "Volume (Å³)": f"{box.volume:,.0f}"}, kind="box")
 
     def _on_docking_finished(self, outcomes: list[LigandOutcome]) -> None:
-        self.project_explorer.clear_category("Docking Poses")
+        # ResultsPanel can select the first pose before this slot runs.
+        for name in self.project_explorer.object_names("Docking Poses"):
+            if name != self._pose_object:
+                self.project_explorer.remove_object(name)
         for o in outcomes:
             self.project_explorer.upsert_object("Docking Poses", f"{o.name}: {o.status}", {
                 "Type": "Docking outcome", "Status": o.status, "Message": o.message,
@@ -577,22 +596,58 @@ class MainWindow(QMainWindow):
         if self._focus_state is None:
             self.workspace.select(2)
 
-    def _show_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
-        if self.viewer is None:
+    def _refresh_review_references(self) -> None:
+        self._reference_objects = [name for name in self._reference_objects if self.project_explorer.find(name) is not None]
+        self.results_panel.review_bar.set_references(self._reference_objects)
+
+    def _apply_pose_review(self) -> None:
+        if self._pose_review is None:
             return
-        if self._pose_object:
-            self.viewer.remove_object(self._pose_object)
-        name = f"pose: {outcome.name} #{outcome.poses[pose_index].rank}"
+        explorer = self.project_explorer
+        bar = self.results_panel.review_bar
+        proteins = {name:explorer.is_visible(name) for name in explorer.all_object_names(("protein",))}
+        references = {name:explorer.is_visible(name) for name in self._reference_objects if explorer.find(name) is not None}
+        self._pose_review.apply(proteins,references,bar.reference.currentText(),
+                                locked=bar.lock_reference.isChecked(), hide_protein=bar.hide_protein.isChecked())
+
+    def _review_visibility_changed(self, name: str, visible: bool) -> None:
+        actual = self._pose_review.requested_visibility(name,visible) if self._pose_review else visible
+        if actual != visible:
+            self.viewer.set_visible(name,actual)
+            return
+        self.project_explorer.set_visible(name,visible)
+
+    def _fit_pose_review(self) -> None:
+        if self._pose_review is not None:
+            self._pose_review.fit_view()
+
+    def _show_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
+        if self._pose_review is None:
+            return
+        self._pose_review.show_pose(Chem.MolToMolBlock(outcome.mols[pose_index]),
+                                   keep_camera=self.results_panel.review_bar.keep_camera.isChecked())
+        name = self._pose_review.pose_name
         self._pose_object = name
-        self.viewer.add_object(name, Chem.MolToMolBlock(outcome.mols[pose_index]), "sdf", "ligand")
-        rec = next((n for n in self.project_explorer.object_names("Proteins") if n.endswith("(prepared)")), None)
+        pose = outcome.poses[pose_index]
+        self.project_explorer.upsert_object("Docking Poses",name,{
+            "Type":"Docked pose", "Ligand":outcome.name, "Pose":pose.rank,
+            "Score (kcal/mol, predicted)":pose.score},kind="ligand")
+        rec = next((n for n in self.project_explorer.object_names("Proteins")
+                    if n.endswith("(prepared)") and self.project_explorer.is_visible(n)),None)
         if rec:
-            self.viewer.show_residues_around(name, 4.5, rec)
-        self.status.showMessage(f"{name}: score {outcome.poses[pose_index].score:.2f} kcal/mol (predicted)", 10000)
+            self.viewer.show_residues_around(name,4.5,rec)
+        self._apply_pose_review()
+        self.status.showMessage(f"{outcome.name} pose #{pose.rank}: score {pose.score:.2f} kcal/mol (predicted)",10000)
 
     def _remove_object(self, name: str) -> None:
         self._viewer_call("remove_object", name)
         self.project_explorer.remove_object(name)
+        if name == self._pose_object:
+            self._pose_object = ""
+            if self._pose_review is not None:
+                self._pose_review.has_pose = False
+        if name in self._reference_objects:
+            self._refresh_review_references()
 
     # ================================================================ slots
     def current_theme(self) -> Theme:
@@ -692,6 +747,11 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Opened {project.name}", 6000)
 
     def _reset_workspace(self) -> None:
+        if self._pose_review is not None:
+            self._pose_review.clear()
+        self._reference_objects.clear()
+        self.results_panel.review_bar.set_references([])
+        self.results_panel.review_bar.hide_protein.setChecked(False)
         self._receptor_objects.clear()
         self._source_object = ""
         for cat in ("Proteins", "Ligands", "Docking Boxes", "Docking Poses"):

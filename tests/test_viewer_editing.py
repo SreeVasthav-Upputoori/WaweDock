@@ -672,3 +672,35 @@ def test_ligand_colors_preserve_protein_water_and_selection(live_window):
       setLigandColor('pose',null,true);
       return o.customColor===null && o.color==='element' && o.carbon===o.originalCarbon;
     })()""")
+
+
+def test_full_pose_review_wiring_keeps_reference_and_hidden_protein(live_window,tmp_path):
+    from mds.chem.receptor import HeteroResidue,ReceptorResult
+    from mds.chem.report import Report
+    from test_results_workspace import sample_outcomes
+    w=live_window
+    w.controller.load_structure(DATA/'3PTB.pdb')
+    crystal=tmp_path/'BEN.pdb'
+    crystal.write_text('\n'.join(line for line in (DATA/'3PTB.pdb').read_text().splitlines()
+                                 if line.startswith('HETATM') and line[17:20].strip()=='BEN')+'\nEND\n')
+    hetero=HeteroResidue('BEN','A',1,9,'ligand',crystal)
+    w._on_receptor_prepared(ReceptorResult(tmp_path/'receptor.pdbqt',DATA/'3PTB.pdb',Report(),[hetero]))
+    outcomes=sample_outcomes()
+    w.controller.outcomes=outcomes
+    w.controller.docking_finished.emit(outcomes)
+    bar=w.results_panel.review_bar
+    assert bar.reference.currentText()=='BEN A:1 (crystal)'
+    bar.lock_reference.setChecked(True)
+    bar.hide_protein.setChecked(True)
+    bar.fit.click()
+    camera=js(w.viewer,'JSON.stringify(viewer.getView())')
+    coordinates=js(w.viewer,"JSON.stringify(objects['BEN A:1 (crystal)'].model.selectedAtoms({}).map(a=>[a.x,a.y,a.z]))")
+    assert w.project_explorer.find('pose: current') is not None
+    bar.next.click()
+    assert js(w.viewer,'JSON.stringify(viewer.getView())')==camera
+    assert js(w.viewer,"JSON.stringify(objects['BEN A:1 (crystal)'].model.selectedAtoms({}).map(a=>[a.x,a.y,a.z]))")==coordinates
+    assert js(w.viewer,"!objects['3PTB (prepared)'].visible && objects['BEN A:1 (crystal)'].visible")
+    w.viewer.set_visible('BEN A:1 (crystal)',False)
+    assert js(w.viewer,"objects['BEN A:1 (crystal)'].visible")
+    bar.hide_protein.setChecked(False)
+    assert js(w.viewer,"objects['3PTB (prepared)'].visible && !objects['3PTB'].visible")
