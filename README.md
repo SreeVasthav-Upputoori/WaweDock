@@ -317,6 +317,15 @@ unsigned direct builds. Signing credentials are not stored in the repository and
 no certificate is created or trusted automatically. A self-signed certificate is
 not a substitute for a certificate Windows trusts.
 
+**Free signing for this open-source project.** Published releases are signed at no
+cost through the [SignPath Foundation](https://signpath.org/) open-source program.
+Builds run from tagged source on GitHub Actions (`.github/workflows/release.yml`,
+no Smart App Control on the runner, so the Full/RDKit edition builds there), and the
+artifacts are signed by SignPath.io — the maintainer never holds the private key.
+See the [code signing policy](docs/CODE_SIGNING.md) for how releases are produced and
+verified. Until SignPath onboarding completes, direct downloads may be unsigned and
+Windows will show *"Unknown publisher"*; choose **More info ▸ Run anyway** to install.
+
 Setup installs per user and creates desktop/Start menu shortcuts and file
 associations. Output names include the edition. Open Babel remains separate for
 licensing reasons, so its interaction-analysis feature is not bundled.
@@ -345,6 +354,13 @@ PySide6/Qt (LGPL-3), CCP4 monomer library (LGPL-3).
 protein bond-perception for interaction analysis only. Bundling GPL code into a distributed
 executable would make that distribution GPL-bound, so it is never included in `wavedock.spec` and
 must be installed separately for that feature to work from source.
+
+## License
+
+WaweDock is released under the [MIT License](LICENSE) © 2026 Sree Vasthav Upputoori.
+Bundled third-party components keep their own licenses (listed above); the MIT license
+covers this project's own source. Releases are code-signed under the project's
+[code signing policy](docs/CODE_SIGNING.md).
 
 ## Protein health and repair
 

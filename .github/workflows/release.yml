@@ -1,0 +1,117 @@
+name: Build Windows release
+
+# Builds the frozen WaweDock app on a clean GitHub-hosted Windows runner.
+# These runners do NOT have Smart App Control, so the Full (RDKit) edition
+# builds and self-checks here even though it is blocked on SAC-enforced
+# developer machines.
+#
+# Signing is added after SignPath Foundation onboarding completes (see the
+# commented "sign" job below and docs/CODE_SIGNING.md). Until then this
+# workflow produces UNSIGNED build artifacts for testing only.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [Full, Protein]
+    env:
+      WAVEDOCK_BUILD_EDITION: ${{ matrix.edition }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # Full needs the chemistry + repair backends; Protein is core-only.
+          if ($env:WAVEDOCK_BUILD_EDITION -eq 'Full') {
+            pip install -e ".[docking,repair,dev]"
+          } else {
+            pip install -e ".[dev]"
+          }
+
+      - name: Verify chemistry backend (Full only)
+        if: matrix.edition == 'Full'
+        shell: pwsh
+        run: |
+          python -c "from mds.core.capabilities import probe_in_process; import sys; s=probe_in_process(); print(s.reason or s.version); sys.exit(0 if s.available else 1)"
+
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: pyinstaller --noconfirm --clean wavedock.spec
+
+      - name: Frozen startup check
+        shell: pwsh
+        run: |
+          $flag = if ($env:WAVEDOCK_BUILD_EDITION -eq 'Full') { '--startup-check-full' } else { '--startup-check' }
+          $p = Start-Process -FilePath "dist\WaweDock\WaweDock.exe" -ArgumentList $flag -WorkingDirectory $env:TEMP -PassThru -WindowStyle Hidden
+          if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id; throw 'Startup check timed out.' }
+          $p.Refresh()
+          if ($p.ExitCode -ne 0) { throw "Startup check failed (exit $($p.ExitCode))." }
+
+      - name: Upload unsigned build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WaweDock-${{ matrix.edition }}-unsigned
+          path: dist/WaweDock
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Signing job — enable AFTER SignPath Foundation onboarding is approved.
+  #
+  # SignPath gives you three values to fill in below (as repo Variables) plus
+  # one secret:
+  #   vars.SIGNPATH_ORGANIZATION_ID
+  #   vars.SIGNPATH_PROJECT_SLUG
+  #   vars.SIGNPATH_SIGNING_POLICY_SLUG   (e.g. "release-signing")
+  #   secrets.SIGNPATH_API_TOKEN
+  #
+  # Then uncomment this job. It submits each unsigned artifact to SignPath,
+  # which signs the executable and the bundled .dll/.pyd files, and returns the
+  # signed bundle. The installer is signed as a follow-up signing request once
+  # the signed app bundle exists.
+  # ---------------------------------------------------------------------------
+  #
+  # sign:
+  #   needs: build
+  #   runs-on: windows-latest
+  #   strategy:
+  #     matrix:
+  #       edition: [Full, Protein]
+  #   steps:
+  #     - name: Download unsigned artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: WaweDock-${{ matrix.edition }}-unsigned
+  #         path: dist/WaweDock
+  #     - name: Submit to SignPath for signing
+  #       uses: signpath/github-action-submit-signing-request@v1
+  #       with:
+  #         api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+  #         organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+  #         project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+  #         signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+  #         github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+  #         wait-for-completion: true
+  #         output-artifact-directory: dist/WaweDock-signed
+  #     - name: Upload signed artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: WaweDock-${{ matrix.edition }}-signed
+  #         path: dist/WaweDock-signed
