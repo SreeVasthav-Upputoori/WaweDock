@@ -14,22 +14,26 @@ Scientific policy
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem
+
 import csv
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rdkit import Chem, RDLogger
-# Deliberately NOT importing rdkit.Chem.AllChem: that umbrella pulls rdShapeHelpers whose
-# DLL is blocked by Windows Smart App Control on some machines (same policy that blocks
-# rdMolStandardize).  Use the fine-grained submodules we actually need instead.
-from rdkit.Chem import (Crippen, Descriptors, Lipinski, rdChemReactions, rdDistGeom,
-                        rdForceFieldHelpers, rdMolDescriptors)
+# Chemistry imports are local to operations, so protein tools do not require RDKit.
 
 from mds.chem.report import PreparationError, Report
 
 log = logging.getLogger("mds.chem.ligand")
-RDLogger.DisableLog("rdApp.*")  # RDKit messages are surfaced through Report instead
+
+
+def _configure_rdkit_logging():
+    from rdkit import RDLogger
+    RDLogger.DisableLog("rdApp.*")
+
 
 # Elements for which AutoDock Vina atom types exist.
 VINA_ELEMENTS = frozenset({"H", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I", "B", "Si", "Se"})
@@ -76,6 +80,8 @@ class PreparedLigand:
 # ---------------------------------------------------------------- reading
 def read_ligands(path: Path) -> list[LigandEntry]:
     """Read every molecule of an SDF/MOL/MOL2/SMILES/CSV file."""
+    from rdkit import Chem
+    _configure_rdkit_logging()
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
@@ -112,6 +118,7 @@ def read_ligands(path: Path) -> list[LigandEntry]:
 
 
 def _from_smiles(smiles: str, name: str, source: str = "") -> LigandEntry:
+    from rdkit import Chem
     mol = Chem.MolFromSmiles(smiles)
     return LigandEntry(name, mol, "" if mol else f"Invalid SMILES (valence or syntax error): {smiles}",
                        source)
@@ -133,12 +140,18 @@ def _read_csv(path: Path) -> list[LigandEntry]:
 
 
 def entry_from_smiles(smiles: str, name: str = "ligand") -> LigandEntry:
+    _configure_rdkit_logging()
     return _from_smiles(smiles.strip(), name, "SMILES input")
 
 
 # ------------------------------------------------------------- properties
 def compute_properties(mol: Chem.Mol) -> dict[str, float | int | str]:
     """Descriptors, Lipinski Rule-of-Five and Veber checks (on the heavy-atom graph)."""
+    from rdkit import Chem
+    from rdkit.Chem import Crippen
+    from rdkit.Chem import Descriptors
+    from rdkit.Chem import Lipinski
+    from rdkit.Chem import rdMolDescriptors
     m = Chem.RemoveHs(mol)
     mw = Descriptors.MolWt(m)
     logp = Crippen.MolLogP(m)
@@ -157,6 +170,7 @@ def compute_properties(mol: Chem.Mol) -> dict[str, float | int | str]:
 
 # ------------------------------------------------------------ preparation
 def _ionisation_notes(mol: Chem.Mol, report: Report) -> None:
+    from rdkit import Chem
     found = []
     for label, smarts in _IONISABLE.items():
         patt = Chem.MolFromSmarts(smarts)
@@ -170,6 +184,8 @@ def _ionisation_notes(mol: Chem.Mol, report: Report) -> None:
 
 
 def _apply_simple_ionisation(mol: Chem.Mol, report: Report) -> Chem.Mol:
+    from rdkit import Chem
+    from rdkit.Chem import rdChemReactions
     rules = [
         ("carboxylic acid -> carboxylate", "[CX3:1](=[O:2])[OX2H1:3]>>[C:1](=[O:2])[O-:3]"),
         ("aliphatic amine -> ammonium",
@@ -212,8 +228,11 @@ def prepare_ligand(
     keep_input_3d: bool = False,
 ) -> PreparedLigand:
     """Validate ``entry`` and produce a Vina-ready PDBQT with a preparation report."""
+    from rdkit import Chem
+    from rdkit.Chem import rdDistGeom
     from meeko import MoleculePreparation, PDBQTWriterLegacy
 
+    _configure_rdkit_logging()
     rep = Report()
     if entry.mol is None:
         rep.error(entry.error or "Molecule could not be read.")
@@ -305,6 +324,7 @@ def prepare_ligand(
 
 
 def _single_conformer(mol: Chem.Mol, conf_id: int) -> Chem.Mol:
+    from rdkit import Chem
     single = Chem.Mol(mol)
     single.RemoveAllConformers()
     single.AddConformer(Chem.Conformer(mol.GetConformer(conf_id)), assignId=True)
@@ -312,6 +332,7 @@ def _single_conformer(mol: Chem.Mol, conf_id: int) -> Chem.Mol:
 
 
 def _optimise(mol_h: Chem.Mol, rep: Report) -> None:
+    from rdkit.Chem import rdForceFieldHelpers
     if rdForceFieldHelpers.MMFFHasAllMoleculeParams(mol_h):
         res = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
         converged = sum(1 for c, _ in res if c == 0)

@@ -24,10 +24,11 @@ the diagnostic report at `%LOCALAPPDATA%\WaweDock\WaweDock\logs\startup-error.tx
 The same folder contains `mds.log`, windowed-launch console output and native crash
 traces. If application data is unwritable, diagnostics use `%TEMP%\WaweDock\logs`.
 
-Run `.\.venv\Scripts\python.exe -m mds --startup-check` before distributing an
-updated installation. It uses isolated settings, verifies that the actual main
-window and 3D viewer become ready, and exits nonzero on import failures or timeout.
-It does not repair missing/blocked dependencies or modify Windows security policy.
+Run `.\.venv\Scripts\python.exe -m mds --startup-check` to verify the main window,
+3D viewer and the availability report using isolated settings. A usable protein
+workspace can pass with chemistry unavailable. `--startup-check-full` additionally
+requires the actual RDKit/Meeko backend and exits nonzero when it cannot load.
+Neither check repairs missing/blocked dependencies or changes Windows security policy.
 
 Windows Smart App Control can block an unsigned dependency even when the Python
 code is correct. The observed failure was RDKit's `RDKitRDInchiLib` DLL. Its policy
@@ -36,8 +37,14 @@ event was `VerifiedAndReputableDesktop` (Code Integrity event 3077). Microsoft
 A supported distribution needs trusted signatures/reputation for its native
 libraries; signing only the outer executable does not ensure that its dependent
 DLLs will load. See [Microsoft's signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
-The launcher reports this condition; it does not bypass it. Normal GUI startup
-remained blocked by that policy in the current machine's final startup check.
+Optional chemistry is now checked in a separate local process. If it is missing,
+blocked, crashes or times out, the application opens its protein workspace and
+clearly disables ligand preparation, receptor PDBQT preparation, docking and
+chemistry-dependent analysis. Protein viewing, selection, cleanup, diagnostics and
+independently available PDBFixer/OpenMM repair operations remain usable. Project
+saves preserve ligand/run data that the unavailable backend could not load. The
+current machine passes the core startup check and correctly fails the full-feature
+check while its RDKit DLL remains blocked; security settings are unchanged.
 
 On Windows, WaweDock automatically adds itself to **Open with** on first launch,
 for PDB/mmCIF and supported molecular ligand files. This works in the packaged
@@ -262,31 +269,68 @@ pip install wavedock[interactions]      # or: pip install openbabel-wheel
 pytest          # preparation, docking, interactions, GUI workflows and background jobs
 ```
 
-## Windows executable
+## Installation profiles and Windows releases
+
+The base Python installation provides the protein workspace. Chemistry and repair
+backends are explicit extras:
 
 ```powershell
-pip install pyinstaller
-pyinstaller --noconfirm wavedock.spec     # -> dist\WaweDock\WaweDock.exe (+ _internal\)
+python -m pip install -e ".[docking,repair,dev]"  # full development environment
+python -m pip install -e ".[repair,dev]"          # protein tools and supported repairs
 ```
 
-For an installer, install Inno Setup 6 and compile the setup recipe after building
-the executable:
+Installing an extra does not override Windows trust decisions. When optional
+chemistry cannot load, the existing window shows which tools are unavailable;
+there are no simulated docking or repair results. Restart after changing installed
+backends. Optional-backend tests are reported as skipped when their native library
+cannot load; that is not a passing full scientific validation.
+
+For a local development executable (not a public installer):
 
 ```powershell
-ISCC.exe installer/wavedock.iss          # -> dist/installer/WaweDock-Setup-0.1.0.exe
+$env:WAVEDOCK_BUILD_EDITION = "Protein"   # or Full
+python -m PyInstaller --noconfirm wavedock.spec
 ```
 
-Setup installs per user, creates desktop/Start menu shortcuts, and registers
-**Open with** during installation. Uninstall removes only this installation's
-registration, preserving other applications and newer WaweDock installations.
-Portable builds register automatically when first opened. No admin rights or
-manual registration script is required by users.
+**Protein** excludes RDKit, Meeko and associated docking-only packages from the
+bundle and registers only PDB/mmCIF formats. **Full** includes docking dependencies
+and enables their tools only after a successful capability check. Both reuse the
+same UI, selection, viewer, project format and optional repair backend. Qt's Windows
+baseline is Windows 10 1809 or later / Windows 11; these installer builds target
+x64. See [Qt platform requirements](https://doc.qt.io/qt-6.10/supported-platforms.html).
 
-The build bundles AutoDock Vina 1.2.7, the monomer library and the 3D viewer, but deliberately
-**not** Open Babel (see Licensing), so "Interactions (ProLIF)" is unavailable in this build.
-**Note:** Windows 11 *Smart App Control* blocks new unsigned executables (this machine blocks
-`WaweDock.exe` for that reason). Sign the executable with a code-signing certificate before
-distributing it, or run from source as above.
+Public installer builds must use a valid trusted code-signing certificate with a
+private key in the current user's Windows certificate store, Windows SDK SignTool
+and Inno Setup 6 on PATH:
+
+```powershell
+.\scripts\build_windows_release.ps1 -CertificateThumbprint YOUR_CERTIFICATE_THUMBPRINT -Edition Full
+.\scripts\build_windows_release.ps1 -CertificateThumbprint YOUR_CERTIFICATE_THUMBPRINT -Edition Protein
+```
+
+Full builds first require a working chemistry backend and the real scientific/GUI
+docking tests on the approved build host. The script then signs native EXE/DLL/PYD files that do not already have valid signatures,
+verifies every native signature, launches the frozen executable outside the checkout
+with the appropriate startup check, and then builds a signed installer/uninstaller.
+A Full build cannot pass on protein-only fallback. The installer recipe refuses
+unsigned direct builds. Signing credentials are not stored in the repository and
+no certificate is created or trusted automatically. A self-signed certificate is
+not a substitute for a certificate Windows trusts.
+
+Setup installs per user and creates desktop/Start menu shortcuts and file
+associations. Output names include the edition. Open Babel remains separate for
+licensing reasons, so its interaction-analysis feature is not bundled.
+
+**Verification boundary:** source/native protein-workspace behavior is tested on
+this machine with Smart App Control unchanged. No production-signed installer or
+clean-machine compatibility audit has been produced in this increment: a trusted
+signing certificate is not installed here, and local PowerShell policy prevents
+release-script execution. The script syntax is verified; its signing/build stages
+require an approved build environment and were not executed here. No execution-policy
+bypass is applied. The workflow refuses to build a public installer without signing
+credentials. Before publishing, run the signed installers on
+clean supported Windows systems with Smart App Control enabled; this code does
+not claim compatibility with every architecture, driver or organisation policy.
 
 Logs: `%LOCALAPPDATA%\WaweDock\WaweDock\logs\mds.log` (*Tools ▸ Open Log Folder*).
 Logo source: `tools/make_logo.py`.

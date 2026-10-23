@@ -10,7 +10,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, Signal
-from rdkit import Chem
 
 from mds.chem import box as boxlib
 from mds.chem.box import DockingBox
@@ -45,6 +44,7 @@ class _ReferenceJob(Job):
 
 
 class Controller(QObject):
+    chemistry_changed = Signal(object)
     project_changed = Signal()
     structure_loaded = Signal(str, str)         # object name, path
     structure_edited = Signal(str, str)         # object name, path (after delete/keep-only)
@@ -78,6 +78,8 @@ class Controller(QObject):
     def __init__(self, runner: JobRunner, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.runner = runner
+        self.chemistry = None
+        self._chemistry_job = None
         self._contact_queue = LatestJobQueue(runner, self)
         self._box_geometry = boxlib.BoxGeometryCache()
         self.project: Project | None = None
@@ -114,6 +116,27 @@ class Controller(QObject):
         self.structure_edited.connect(self.protein_health.invalidate)
         self.project_changed.connect(self.protein_health.invalidate)
 
+    def check_chemistry(self):
+        if self.chemistry is not None or self._chemistry_job is not None: return
+        from mds.core.capabilities import ProbeChemistryJob
+        self._chemistry_job=self._submit(ProbeChemistryJob(),self._chemistry_checked)
+
+    def _chemistry_checked(self,status):
+        self._chemistry_job=None
+        self.chemistry=status
+        self.chemistry_changed.emit(status)
+        if not status.available: log.warning('Ligand and docking tools unavailable: %s',status.reason)
+
+    def _require_chemistry(self):
+        if self.chemistry is None:
+            # Public controller calls can precede the startup background check.
+            from mds.core.capabilities import check_chemistry
+            self._chemistry_checked(check_chemistry())
+        if self.chemistry.available: return True
+        self.error.emit('Ligand and docking tools unavailable',
+            'The chemistry backend could not load. Protein viewing, editing and health tools remain available.\n\n'+self.chemistry.reason)
+        return False
+
     # ------------------------------------------------------------------ jobs
     def _submit(self, job: Job, on_done: Callable[[object], None]) -> int:
         job_id = self.runner.submit(job)
@@ -135,6 +158,11 @@ class Controller(QObject):
             self.receptor_check_busy.emit(False)
 
     def _job_failed(self, job_id: int, tb: str) -> None:
+        if job_id==self._chemistry_job:
+            from mds.core.capabilities import ChemistryStatus
+            self._callbacks.pop(job_id,None)
+            self._chemistry_checked(ChemistryStatus(False,'Chemistry check failed: '+(tb.strip().splitlines()[-1] if tb.strip() else 'unknown error')))
+            return
         self._finish_receptor_check(job_id)
         if self._callbacks.pop(job_id, None) is None:
             return
@@ -146,6 +174,11 @@ class Controller(QObject):
         self.error.emit(self.runner.name(job_id) + " failed", last)
 
     def _job_cancelled(self, job_id: int) -> None:
+        if job_id==self._chemistry_job:
+            from mds.core.capabilities import ChemistryStatus
+            self._callbacks.pop(job_id,None)
+            self._chemistry_checked(ChemistryStatus(False,'Chemistry check cancelled. Restart WaweDock to check again.'))
+            return
         self._finish_receptor_check(job_id)
         self._callbacks.pop(job_id, None)
         if job_id == self._docking_job:
@@ -235,6 +268,7 @@ class Controller(QObject):
         self.receptor_check_busy.emit(True)
 
     def prepare_receptor(self, options: ReceptorOptions) -> None:
+        if not self._require_chemistry(): return
         if self.source_pdb is None:
             self.error.emit("No structure", "Open a PDB/mmCIF structure first (File > Open Structure).")
             return
@@ -258,6 +292,7 @@ class Controller(QObject):
 
     # --------------------------------------------------------------- ligands
     def add_smiles(self, smiles: str, name: str) -> bool:
+        if not self._require_chemistry(): return False
         entry = entry_from_smiles(smiles, name or f"ligand_{len(self.entries) + 1}")
         if entry.mol is None:
             self.error.emit("Invalid structure", entry.error)
@@ -266,6 +301,7 @@ class Controller(QObject):
         return True
 
     def import_ligand_file(self, path: Path) -> None:
+        if not self._require_chemistry(): return
         project = self.ensure_project()
         try:
             entries = read_ligands(Path(path))
@@ -296,6 +332,7 @@ class Controller(QObject):
         self.ligands_changed.emit()
 
     def prepare_ligands(self, *, ionize: str, n_conformers: int, seed: int) -> None:
+        if not self._require_chemistry(): return
         if not self.entries:
             self.error.emit("No ligands", "Add a SMILES string or import a ligand file first.")
             return
@@ -366,6 +403,7 @@ class Controller(QObject):
                 coords = self._box_geometry.file_coords(self._box_ligand_path, ligand=True)
                 label = f"Co-crystal ligand {self._box_ligand_path.stem}"
             elif self.reference is not None and self.reference.GetNumConformers():
+                from rdkit import Chem
                 coords = Chem.RemoveHs(self.reference).GetConformer().GetPositions()
                 label = self.reference_name or label
         except (OSError, ValueError, RuntimeError) as exc:
@@ -381,6 +419,7 @@ class Controller(QObject):
             self.reference, self.reference_name = None, ""
             self.reference_changed.emit("")
             return
+        if not self._require_chemistry(): return
         cache = self.ensure_project().prepared_dir("cache")
         self._submit(_ReferenceJob(hetero, cache), lambda r, h=hetero: self._reference_done(h, r))
 
@@ -392,7 +431,10 @@ class Controller(QObject):
 
     def redock_cocrystal(self, hetero: HeteroResidue) -> None:
         """Queue the co-crystal ligand (re-embedded from its chemistry) for a redocking test."""
+        if not self._require_chemistry(): return
+        from rdkit import Chem
         def done(result: tuple[Chem.Mol, Chem.Mol]) -> None:
+            from rdkit import Chem
             template, ref = result
             self.reference, self.reference_name = ref, hetero.label
             entry = LigandEntry(f"{hetero.name}_redock", Chem.Mol(template), "", "RCSB definition")
@@ -405,6 +447,7 @@ class Controller(QObject):
 
     # ------------------------------------------------------------- docking
     def run_docking(self, params: DockingParameters) -> None:
+        if not self._require_chemistry(): return
         if self.docking_running:
             self.message.emit("Docking is already running.")
             return
@@ -455,12 +498,14 @@ class Controller(QObject):
 
     # -------------------------------------------------------------- analysis
     def contacts_for(self, outcome: LigandOutcome, pose_index: int) -> list[Contact]:
+        if not self._require_chemistry(): return []
         if self.receptor is None:
             return []
         atoms = cached_protein_atoms(self.receptor.prepared_pdb)
         return pose_contacts(outcome.mols[pose_index], atoms)
 
     def request_contacts(self, outcome: LigandOutcome, pose_index: int) -> None:
+        if not self._require_chemistry(): return
         if self.receptor is None:
             self._contact_queue.clear()
             self.contacts_ready.emit(outcome, pose_index, [])
@@ -491,6 +536,7 @@ class Controller(QObject):
         The receptor's one-time RDKit rebuild (Open Babel bond perception) is cached across
         calls for the same prepared receptor, so later poses analyse in well under a second.
         """
+        if not self._require_chemistry(): return
         if self.receptor is None:
             self.error.emit("No receptor", "Prepare the receptor first.")
             return
@@ -512,6 +558,8 @@ class Controller(QObject):
 
     def compute_similarity(self, cutoff: float, reference_smiles: str = "") -> None:
         """Tanimoto similarity + clustering of the prepared ligands, run in the background."""
+        if not self._require_chemistry(): return
+        from rdkit import Chem
         if len(self.prepared) < 2:
             self.error.emit("Not enough ligands", "Prepare at least two ligands first.")
             return
@@ -668,6 +716,7 @@ class Controller(QObject):
             note.to_excel(xl, sheet_name="Read me", index=False)
 
     def export_sdf(self, path: Path) -> None:
+        if not self._require_chemistry(): return
         from mds.chem.poses import write_poses_sdf
         mols, props = [], []
         for o in self.outcomes:
@@ -687,8 +736,13 @@ class Controller(QObject):
         st["receptor"] = ({"pdbqt": pr.rel(self.receptor.pdbqt),
                            "prepared_pdb": pr.rel(self.receptor.prepared_pdb),
                            "n_atoms": self.receptor.n_atoms} if self.receptor else None)
-        st["ligands"] = [{"name": e.name, "smiles": Chem.MolToSmiles(Chem.RemoveHs(e.mol))}
-                         for e in self.entries if e.mol is not None]
+        # Unavailable chemistry must not overwrite ligand state we could not load.
+        if self.entries and self.chemistry is not None and self.chemistry.available:
+            from rdkit import Chem
+            st["ligands"] = [{"name": e.name, "smiles": Chem.MolToSmiles(Chem.RemoveHs(e.mol))}
+                             for e in self.entries if e.mol is not None]
+        elif self.chemistry is not None and self.chemistry.available:
+            st["ligands"] = []
         st["ligand_options"] = self.ligand_options
         st["box"] = self.box.as_dict() if self.box else None
         st["parameters"] = vars(self.params)
@@ -720,10 +774,14 @@ class Controller(QObject):
                                            hetero, rec.get("n_atoms", 0))
             self.receptor_prepared.emit(self.receptor)
         self.hetero_found.emit(self.hetero)
-        for item in st.get("ligands", []):
-            e = entry_from_smiles(item["smiles"], item["name"])
-            if e.mol is not None:
-                self.entries.append(e)
+        if self.chemistry is None:
+            from mds.core.capabilities import check_chemistry
+            self._chemistry_checked(check_chemistry())
+        if self.chemistry.available:
+            for item in st.get("ligands", []):
+                e = entry_from_smiles(item["smiles"], item["name"])
+                if e.mol is not None:
+                    self.entries.append(e)
         self.ligands_changed.emit()
         if st.get("box"):
             b = st["box"]
@@ -733,7 +791,7 @@ class Controller(QObject):
             self.params = DockingParameters(**st["parameters"])
         self.ligand_options = st.get("ligand_options", self.ligand_options)
         runs = st.get("runs", [])
-        if runs:
+        if runs and self.chemistry.available:
             self._load_run(pr.abs(runs[-1]))
         self.project_changed.emit()
 
@@ -762,6 +820,7 @@ class Controller(QObject):
         for o in outcomes.values():
             sdf = (o.folder or run_dir) / "poses.sdf"
             if sdf.exists():
+                from rdkit import Chem
                 o.mols = [m for m in Chem.SDMolSupplier(str(sdf), removeHs=False) if m is not None]
         self.outcomes = [o for o in outcomes.values() if o.status != "ok" or len(o.mols) == len(o.poses)]
         self.docking_finished.emit(self.outcomes)

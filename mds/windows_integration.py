@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from mds.core.paths import assets_dir
+from mds.core.paths import assets_dir, build_edition
 
 EXTENSIONS = (".pdb", ".ent", ".cif", ".mmcif", ".sdf", ".mol", ".mol2", ".smi", ".smiles")
 PROGID = "WaweDock.MolecularFile"
@@ -46,7 +46,8 @@ def registration_entries() -> list[tuple[str, str, str]]:
         (CAPABILITIES, "ApplicationIcon", icon),
         (r"Software\RegisteredApplications", "WaweDock", CAPABILITIES),
     ]
-    for extension in EXTENSIONS:
+    extensions=EXTENSIONS if build_edition()=='Full' else ('.pdb','.ent','.cif','.mmcif')
+    for extension in extensions:
         entries.extend([
             (CLASSES + "\\" + extension + r"\OpenWithProgids", PROGID, ""),
             (application + r"\SupportedTypes", extension, ""),
@@ -75,6 +76,19 @@ def register() -> bool:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as handle:
             winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, value)
         changed = True
+    if build_edition()=='Protein':
+        # Remove this application's old Full-edition associations on downgrade,
+        # preserving other programs and the user's default-app choices.
+        for extension in EXTENSIONS:
+            if extension in ('.pdb','.ent','.cif','.mmcif'): continue
+            stale=((CLASSES+'\\'+extension+r'\OpenWithProgids',PROGID,''),
+                   (CLASSES+r'\Applications\WaweDock.exe\SupportedTypes',extension,''),
+                   (CAPABILITIES+r'\FileAssociations',extension,PROGID))
+            for key,name,value in stale:
+                if _read(winreg,key,name)==value:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key,0,winreg.KEY_SET_VALUE) as handle:
+                        winreg.DeleteValue(handle,name)
+                    changed=True
     if changed:
         ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
     return changed

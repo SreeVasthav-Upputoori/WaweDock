@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from rdkit import Chem
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 
 from mds.chem.similarity import cluster, compare_to_reference, most_similar_pairs, tanimoto
 

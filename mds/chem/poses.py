@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem
+
 import logging
 import urllib.request
 from pathlib import Path
 
 import numpy as np
-from rdkit import Chem
 # AllChem umbrella is avoided (its rdShapeHelpers DLL is blocked by Smart App Control on
 # some Windows machines); AssignBondOrdersFromTemplate is pure Python so we inline a copy.
-from rdkit.Chem.rdchem import BondType
 
 from mds.chem.report import PreparationError
 from mds.engines.base import Pose
@@ -21,6 +23,8 @@ def assign_bond_orders_from_template(refmol: Chem.Mol, mol: Chem.Mol) -> Chem.Mo
 
     Transfers bond orders from ``refmol`` onto ``mol`` after a substructure match.
     """
+    from rdkit.Chem.rdchem import BondType
+    from rdkit import Chem
     refmol2 = Chem.Mol(refmol)
     mol2 = Chem.Mol(mol)
     matching = mol2.GetSubstructMatch(refmol2)
@@ -66,6 +70,7 @@ def poses_to_mols(poses: list[Pose], ligand_pdbqt: str) -> list[Chem.Mol]:
     Bond orders/aromaticity come from the ``REMARK SMILES`` records Meeko wrote into the
     input ligand; the heavy-atom coordinates come from the docked pose.
     """
+    from rdkit import Chem
     from meeko import PDBQTMolecule, RDKitMolCreate
 
     header = [l for l in ligand_pdbqt.splitlines()
@@ -91,6 +96,7 @@ def poses_to_mols(poses: list[Pose], ligand_pdbqt: str) -> list[Chem.Mol]:
 
 def _graph_only(mol: Chem.Mol) -> Chem.Mol:
     """Heavy-atom skeleton with identical-bond types, for bond-order-agnostic matching."""
+    from rdkit import Chem
     m = Chem.RemoveHs(mol, sanitize=False)
     rw = Chem.RWMol()
     for a in m.GetAtoms():
@@ -106,6 +112,7 @@ def symmetric_rmsd(probe: Chem.Mol, reference: Chem.Mol, max_matches: int = 2000
     All graph automorphisms are tried, so symmetric groups (phenyl rings, carboxylates)
     are not penalised for an equivalent atom labelling.
     """
+    from rdkit import Chem
     p_graph, r_graph = _graph_only(probe), _graph_only(reference)
     if p_graph.GetNumAtoms() != r_graph.GetNumAtoms():
         raise ValueError(f"Heavy-atom counts differ ({p_graph.GetNumAtoms()} vs "
@@ -122,6 +129,7 @@ def symmetric_rmsd(probe: Chem.Mol, reference: Chem.Mol, max_matches: int = 2000
 
 
 def centroid_shift(probe: Chem.Mol, reference: Chem.Mol) -> float:
+    from rdkit import Chem
     p = np.array(Chem.RemoveHs(probe, sanitize=False).GetConformer().GetPositions()).mean(axis=0)
     r = np.array(Chem.RemoveHs(reference, sanitize=False).GetConformer().GetPositions()).mean(axis=0)
     return float(np.linalg.norm(p - r))
@@ -130,6 +138,7 @@ def centroid_shift(probe: Chem.Mol, reference: Chem.Mol) -> float:
 # ------------------------------------------------------------ reference ligands
 def fetch_ccd_template(resname: str, cache_dir: Path | None = None) -> Chem.Mol:
     """Download the ideal-geometry definition (bond orders!) of a PDB ligand from RCSB."""
+    from rdkit import Chem
     resname = resname.upper()
     cache = (cache_dir / f"{resname}_ideal.sdf") if cache_dir else None
     if cache and cache.exists():
@@ -154,6 +163,7 @@ def fetch_ccd_template(resname: str, cache_dir: Path | None = None) -> Chem.Mol:
 
 def reference_from_pdb_ligand(ligand_pdb: Path, template: Chem.Mol) -> Chem.Mol:
     """Crystal-coordinate ligand with correct bond orders, using ``template`` for chemistry."""
+    from rdkit import Chem
     raw = Chem.MolFromPDBFile(str(ligand_pdb), removeHs=True, sanitize=False, proximityBonding=True)
     if raw is None:
         raise PreparationError(f"Could not read ligand coordinates from {ligand_pdb.name}")
@@ -167,6 +177,7 @@ def reference_from_pdb_ligand(ligand_pdb: Path, template: Chem.Mol) -> Chem.Mol:
 
 # ---------------------------------------------------------------------- export
 def write_poses_sdf(path: Path, mols: list[Chem.Mol], properties: list[dict]) -> None:
+    from rdkit import Chem
     writer = Chem.SDWriter(str(path))
     try:
         for mol, props in zip(mols, properties):

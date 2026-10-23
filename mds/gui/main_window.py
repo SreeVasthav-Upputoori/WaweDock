@@ -20,13 +20,12 @@ import platform
 from pathlib import Path
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QUrl, qVersion
+from PySide6.QtCore import QSettings, QStandardPaths, QTimer, Qt, QUrl, qVersion
 from PySide6.QtGui import (QActionGroup, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent,
                            QIcon, QKeySequence, QPixmap)
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QInputDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox, QStyle, QTableWidget,
                                QTableWidgetItem, QToolBar, QVBoxLayout, QDialog, QWidget)
-from rdkit import Chem
 
 from mds import APP_NAME, __version__
 from mds.chem.workflow import LigandOutcome
@@ -115,7 +114,37 @@ class MainWindow(QMainWindow):
         self.layouts.capture_default()
         self.layouts.restore_session()
         self.set_theme(Theme(settings.value("appearance/theme", Theme.LIGHT.value)))
+        self.chemistry_notice=QLabel()
+        self.chemistry_notice.setTextFormat(Qt.TextFormat.PlainText)
+        self.chemistry_notice.setWordWrap(True)
+        self.chemistry_notice.setStyleSheet('background:#fff5d9;color:#754900;padding:6px;')
+        self.workspace.layout().insertWidget(1,self.chemistry_notice)
+        self.controller.chemistry_changed.connect(self._chemistry_availability)
+        self._chemistry_availability(self.controller.chemistry)
+        QTimer.singleShot(0,self.controller.check_chemistry)
         log.info("%s %s started", APP_NAME, __version__)
+
+    def _chemistry_availability(self,status):
+        available=bool(status is not None and status.available)
+        if status is None:
+            text='Checking available ligand and docking tools...'
+        elif 'protein tools only' in status.reason:
+            text='Protein edition: ligand preparation and docking are not included.'
+        else:
+            text=('Ligand and docking tools are unavailable on this PC. Protein viewing, cleanup and health tools remain available.' if not available else '')
+        self.chemistry_notice.setText(text)
+        self.chemistry_notice.setVisible(bool(text))
+        self.chemistry_notice.setToolTip(status.reason if status is not None else '')
+        for key in ('file.import_ligands','build.from_smiles','prepare.protein','prepare.ligands',
+                    'docking.run','analyse.descriptors','analyse.similarity','analyse.interaction_diagram'):
+            action=self.actions_[key]
+            if action.property('chemistry_tip') is None: action.setProperty('chemistry_tip',action.toolTip())
+            action.setEnabled(available)
+            action.setToolTip(action.property('chemistry_tip') if available else text)
+        self.docking_panel.prep_rec_btn.setEnabled(available)
+        self.docking_panel.step_pages[1].setEnabled(available)
+        self.docking_panel.step_pages[3].setEnabled(available)
+        self.results_panel.setEnabled(available)
 
     def _on_workspace_changed(self, index: int) -> None:
         previous = self._workspace_mode
@@ -644,6 +673,7 @@ class MainWindow(QMainWindow):
             self._on_box_changed(self.controller.box)
 
     def _on_ligands_prepared(self, outcome) -> None:
+        from rdkit import Chem
         for lig in outcome.prepared:
             props = {"Type": "Prepared ligand", "SMILES": lig.smiles, **lig.properties}
             self.project_explorer.upsert_object("Ligands", lig.name, props, visible=False, kind="ligand")
@@ -709,6 +739,7 @@ class MainWindow(QMainWindow):
             self._pose_review.fit_view()
 
     def _show_pose(self, outcome: LigandOutcome, pose_index: int) -> None:
+        from rdkit import Chem
         if self._pose_review is None:
             return
         self._pose_review.show_pose(Chem.MolToMolBlock(outcome.mols[pose_index]),

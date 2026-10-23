@@ -13,6 +13,8 @@ from mds.engines import VinaEngine
 from mds.gui.main_window import MainWindow
 from mds.project import Project
 
+pytest.importorskip("rdkit.Chem", reason="Requires optional docking dependencies", exc_type=ImportError)
+
 DATA = Path(__file__).parent / "data"
 pytestmark = pytest.mark.skipif(not VinaEngine().available(), reason="vina.exe not bundled")
 

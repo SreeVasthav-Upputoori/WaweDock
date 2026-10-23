@@ -25,6 +25,10 @@ Open Babel is installed separately into the same environment.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem
+
 import json
 import logging
 import math
@@ -34,7 +38,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import gemmi
-from rdkit import Chem
 
 from mds.chem.report import PreparationError
 
@@ -70,6 +73,7 @@ class InteractionResult:
 
 def protein_to_rdkit(pdb_path: Path) -> Chem.Mol:
     """Build an RDKit molecule for a prepared receptor PDB with correct bonds and residue labels."""
+    from rdkit import Chem
     try:
         from openbabel import pybel
     except ImportError as exc:
@@ -150,6 +154,7 @@ def protein_to_rdkit(pdb_path: Path) -> Chem.Mol:
 
 def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bool = True) -> InteractionResult:
     """Run a ProLIF fingerprint for one docked pose against the prepared receptor."""
+    from rdkit import Chem
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         import prolif

@@ -6,9 +6,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from rdkit import Chem
 
-from rdkit import Chem
 
 from mds.chem.ligand import LigandEntry, PreparedLigand, prepare_ligand
 from mds.chem.interactions import InteractionResult, compute_interactions, protein_to_rdkit

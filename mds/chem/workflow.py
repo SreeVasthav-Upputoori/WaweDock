@@ -10,6 +10,10 @@ Run folder layout (``runs/<run-id>/``)::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem
+
 import csv
 import json
 import logging
@@ -18,7 +22,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from rdkit import Chem
 
 from mds import __version__
 from mds.chem.box import DockingBox

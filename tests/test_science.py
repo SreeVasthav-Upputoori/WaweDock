@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from rdkit import Chem
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 
 from mds.chem.box import DockingBox, box_from_coords, box_from_ligand_file, validate_box
 from mds.chem.ligand import (entry_from_smiles, prepare_ligand, read_ligands)

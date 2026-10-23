@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import openpyxl
 import pytest
-from rdkit import Chem
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 
 from mds.chem.box import DockingBox
 from mds.chem.report import Report

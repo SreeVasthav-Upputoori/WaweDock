@@ -9,12 +9,16 @@ from mds.core.startup import prepare_startup, report_startup_failure
 def main(argv: list[str] | None = None) -> int:
     arguments=list(sys.argv if argv is None else argv)
     args=arguments[1:]
-    check_startup=args==['--startup-check']
+    check_startup=args in (['--startup-check'],['--startup-check-full'])
+    require_full=args==['--startup-check-full']
     log_dir=None
     try:
         # This must happen before Qt, RDKit, or MainWindow imports. A pythonw
         # import failure used to exit silently before logging was configured.
         log_dir=prepare_startup()
+        if len(args)==2 and args[0]=='--probe-chemistry':
+            from mds.core.capabilities import write_probe
+            return write_probe(args[1])
         if args in (["--register-file-associations"], ["--unregister-file-associations"]):
             from mds.windows_integration import register, unregister
             action=unregister if args[0].startswith('--unregister') else register
@@ -22,13 +26,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args[:1]==['--validate']:
             return _validate(args[1:])
-        return _run_gui(arguments,[] if check_startup else args,log_dir,check_startup=check_startup)
+        options={'check_startup':check_startup}
+        if require_full: options['require_full']=True
+        return _run_gui(arguments,[] if check_startup else args,log_dir,**options)
     except Exception as exc:
-        report_startup_failure(exc,log_dir,show_dialog=not check_startup)
+        report_startup_failure(exc,log_dir,show_dialog=not check_startup and args[:1] not in (['--probe-chemistry'],['--validate']))
         return 1
 
 
-def _run_gui(arguments, args, log_dir, *, check_startup=False):
+def _run_gui(arguments, args, log_dir, *, check_startup=False, require_full=False):
     import tempfile
     import time
     from PySide6.QtCore import QCoreApplication, QSettings, QTimer, Qt
@@ -70,9 +76,15 @@ def _run_gui(arguments, args, log_dir, *, check_startup=False):
             deadline=time.monotonic()+20
             timer=QTimer(window);timer.setInterval(100)
             def check():
-                if window.isVisible() and window.viewer is not None and window.viewer._ready:
-                    logging.getLogger('mds').info('Startup check passed: main window and 3D viewer ready')
-                    app.exit(0)
+                if window.isVisible() and window.viewer is not None and window.viewer._ready and window.controller.chemistry is not None:
+                    import json
+                    from dataclasses import asdict
+                    status=window.controller.chemistry
+                    (log_dir/'startup-check.json').write_text(json.dumps({'core_ready':True,'chemistry':asdict(status),'full_required':require_full},indent=2),encoding='utf-8')
+                    code=0 if status.available or not require_full else 1
+                    logging.getLogger('mds').log(logging.INFO if code==0 else logging.ERROR,
+                        'Startup check: core ready; chemistry available=%s; full required=%s',status.available,require_full)
+                    app.exit(code)
                 elif time.monotonic()>deadline:
                     logging.getLogger('mds').error('Startup check failed: main window / 3D viewer not ready within 20 seconds')
                     app.exit(1)

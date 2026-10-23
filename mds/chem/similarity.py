@@ -8,18 +8,24 @@ number of clusters up front, appropriate for the small-to-medium ligand sets thi
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem
+
 from dataclasses import dataclass
 
 import numpy as np
-from rdkit import Chem, DataStructs
-from rdkit.Chem import rdFingerprintGenerator
-from rdkit.ML.Cluster import Butina
 
 DEFAULT_RADIUS = 2       # ECFP4-equivalent
 DEFAULT_N_BITS = 2048
 DEFAULT_CLUSTER_CUTOFF = 0.4   # Tanimoto DISTANCE threshold (1 - similarity); smaller = tighter clusters
 
-_generator = rdFingerprintGenerator.GetMorganGenerator(radius=DEFAULT_RADIUS, fpSize=DEFAULT_N_BITS)
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def _fingerprint_generator():
+    from rdkit.Chem import rdFingerprintGenerator
+    return rdFingerprintGenerator.GetMorganGenerator(radius=DEFAULT_RADIUS, fpSize=DEFAULT_N_BITS)
 
 
 @dataclass
@@ -34,14 +40,17 @@ class SimilarityResult:
 
 def fingerprint(mol: Chem.Mol):
     """Morgan fingerprint of the heavy-atom graph (stereochemistry-aware via default settings)."""
-    return _generator.GetFingerprint(Chem.RemoveHs(mol) if mol.GetNumAtoms() else mol)
+    from rdkit import Chem
+    return _fingerprint_generator().GetFingerprint(Chem.RemoveHs(mol) if mol.GetNumAtoms() else mol)
 
 
 def tanimoto(mol_a: Chem.Mol, mol_b: Chem.Mol) -> float:
+    from rdkit import DataStructs
     return DataStructs.TanimotoSimilarity(fingerprint(mol_a), fingerprint(mol_b))
 
 
 def similarity_matrix(mols: list[Chem.Mol]) -> np.ndarray:
+    from rdkit import DataStructs
     fps = [fingerprint(m) for m in mols]
     n = len(fps)
     mat = np.eye(n)
@@ -55,6 +64,8 @@ def similarity_matrix(mols: list[Chem.Mol]) -> np.ndarray:
 def cluster(mols: list[Chem.Mol], names: list[str],
            cutoff: float = DEFAULT_CLUSTER_CUTOFF) -> SimilarityResult:
     """Butina-cluster ``mols`` by Morgan/Tanimoto distance."""
+    from rdkit.ML.Cluster import Butina
+    from rdkit import DataStructs
     if len(mols) != len(names):
         raise ValueError("mols and names must be the same length")
     if not mols:
@@ -84,6 +95,7 @@ def compare_to_reference(mols: list[Chem.Mol], names: list[str], reference: Chem
                          reference_name: str = "reference", *,
                          cutoff: float = DEFAULT_CLUSTER_CUTOFF) -> SimilarityResult:
     """Cluster ``mols`` and additionally rank them by similarity to ``reference``."""
+    from rdkit import DataStructs
     result = cluster(mols, names, cutoff)
     ref_fp = fingerprint(reference)
     result.reference_name = reference_name

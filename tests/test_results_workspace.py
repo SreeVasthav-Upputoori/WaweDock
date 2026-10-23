@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QItemSelectionModel, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDockWidget
-from rdkit import Chem
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 
 from mds.chem.workflow import LigandOutcome
 from mds.engines.base import Pose

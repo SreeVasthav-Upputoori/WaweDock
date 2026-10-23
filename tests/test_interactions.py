@@ -5,7 +5,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from rdkit import Chem
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 
 from mds.chem import interactions
 from mds.chem.report import PreparationError

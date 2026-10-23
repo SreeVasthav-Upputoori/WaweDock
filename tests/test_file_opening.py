@@ -2,7 +2,8 @@
 from pathlib import Path
 import shutil
 
-from rdkit import Chem
+import pytest
+Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 from mds.gui.main_window import MainWindow
 from mds.project import Project
 

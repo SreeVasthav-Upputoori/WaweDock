@@ -27,3 +27,14 @@ def vina_executable() -> Path:
 
 def assets_dir() -> Path:
     return package_root() / "assets"
+
+
+def build_edition() -> str:
+    """Source installs default to Full; frozen builds declare their installed features."""
+    import json
+    path=package_root()/'build-info.json'
+    if not path.exists(): return 'Full'
+    data=json.loads(path.read_text(encoding='utf-8'))
+    edition=data.get('edition')
+    if edition not in ('Full','Protein'): raise ValueError('Invalid application build edition.')
+    return edition
