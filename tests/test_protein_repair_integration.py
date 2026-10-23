@@ -5,6 +5,7 @@ from PySide6.QtCore import QTimer, Qt
 from conftest import wait_until
 from test_protein_health_integration import window,js
 from test_protein_repair import damaged
+from test_protein_loops import loop_source
 
 
 def test_repair_preview_accept_undo_redo_and_viewer_styles(window,damaged):
@@ -37,8 +38,8 @@ def test_repair_preview_accept_undo_redo_and_viewer_styles(window,damaged):
     # Original anchors are exposed with real parsed bonds even in ribbon view.
     assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CB'}})[0].style.stick")
     assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CA'}})[0].style.stick")
-    assert '0 loops rebuilt' in panel.candidate_summary.text()
-    assert 'not rebuilt' in panel.repair_limits.text()
+    assert '0 loop model(s) built' in panel.candidate_summary.text()
+    assert 'require sequence evidence' in panel.repair_limits.text()
     from dataclasses import replace
     panel._candidate_ready(replace(result,blockers=['Severe reconstructed-atom overlap: example, 1.42 A.']))
     assert '1.42 A.' in panel.candidate_summary.text()
@@ -125,3 +126,43 @@ def test_repair_choices_stay_readable_and_conformers_are_mutually_exclusive(wind
     finally:
         panel.close()
         w.dock_health.setWidget(panel)
+
+
+def test_loop_job_recovers_project_sequence_previews_and_undoes(window,tmp_path,loop_source):
+    import gemmi
+    from test_protein_loops import _loops
+    w=window;c=w.controller;p=w.health_panel
+    source,full,_=loop_source
+    c.load_structure(full)  # immutable original with sequence evidence
+    stripped=tmp_path/'previously-cleaned.pdb'
+    gemmi.read_structure(str(source)).write_minimal_pdb(str(stripped))
+    c.load_structure(stripped);original=c.source_pdb;original_bytes=original.read_bytes()
+    w._show_protein_health();p.repair_btn.click()
+    assert wait_until(lambda:p.repair_plan is not None,20)
+    loop=_loops(p.repair_plan)[0]
+    assert Path(loop.loop['evidence']).parent==c.project.root/'originals'
+    assert Path(loop.loop['evidence'])!=original
+    item=next(p.proposed_changes.item(i) for i in range(p.proposed_changes.count())
+              if p.proposed_changes.item(i).data(Qt.ItemDataRole.UserRole)==loop.id)
+    assert item.checkState()==Qt.CheckState.Unchecked
+    item.setCheckState(Qt.CheckState.Checked)
+    assert all(p.proposed_changes.item(i).checkState()==Qt.CheckState.Unchecked
+               for i,ch in enumerate(p.repair_plan.changes) if ch.kind!='loop')
+    ticks=[];timer=QTimer();timer.setInterval(20);timer.timeout.connect(lambda:ticks.append(1));timer.start()
+    p.build_btn.click()
+    try: assert wait_until(lambda:p.repair_result is not None,90),p.details.toPlainText()
+    finally: timer.stop()
+    result=p.repair_result
+    assert result.can_accept,result.blockers
+    assert len(result.loops)==1 and ticks
+    assert c.source_pdb==original and original.read_bytes()==original_bytes
+    assert '1 loop model(s) built' in p.candidate_summary.text()
+    preview=json.dumps(w._repair_preview_name)
+    assert js(w,f'objects[{preview}].reconstructedIndices.length')==len(result.added)
+    assert not js(w,f'objects[{preview}].editable')
+    p.accept_btn.click()
+    assert c.source_pdb==Path(result.candidate)
+    assert wait_until(lambda:p.report is not None,15)
+    c.undo_structure_edit();assert c.source_pdb==original
+    c.redo_structure_edit();assert c.source_pdb==Path(result.candidate)
+    assert original.read_bytes()==original_bytes

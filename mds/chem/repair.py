@@ -1,7 +1,7 @@
 """Conservative, additive protein repairs with immutable proposals and provenance.
 
-No loop construction, nonstandard-residue replacement, or movement of existing
-coordinates is permitted. PDBFixer is restricted to explicitly listed atoms.
+Atom completion and opt-in sequence-backed short-loop modelling are separate
+operations. Existing coordinates and nonstandard components are preserved.
 """
 from __future__ import annotations
 from collections import defaultdict
@@ -39,6 +39,7 @@ class RepairChange:
     names: list[str] = field(default_factory=list)
     conformer: str = ''
     recommended: bool = True
+    loop: dict | None = None
 
 
 @dataclass
@@ -66,6 +67,8 @@ class RepairResult:
     candidate_sha256: str
     inherited: list[dict] = field(default_factory=list)
     normalised: list[dict] = field(default_factory=list)
+    loops: list[dict] = field(default_factory=list)
+    modelling: dict = field(default_factory=dict)
 
     @property
     def can_accept(self):
@@ -77,7 +80,7 @@ class RepairResult:
         data['parameters'] = {
             'heavy_atom_seed':42,'hydrogen_seed':42,'cpu_threads':2,'existing_coordinates_fixed':True,
             'hydrogen_forcefield':'amber14/protein.ff14SB.xml + amber14/tip3p.xml',
-            'general_refinement':False,'loop_reconstruction':False,'implicit_terminal_atoms':False,
+            'general_refinement':False,'loop_reconstruction':bool(self.loops),'implicit_terminal_atoms':False,
             'broad_bond_length_A':{'heavy':[1.0,1.85],'sulfur_heavy':[1.5,2.25],'hydrogen':[0.8,1.55]},
             'broad_bond_angle_degrees':[60,175],'severe_vdw_overlap_A':0.8,
             'donor_H_acceptor_min_angle_degrees':105,'donor_H_acceptor_min_distance_A':1.4,
@@ -87,7 +90,7 @@ class RepairResult:
         Path(path).write_text(json.dumps(data,indent=2,allow_nan=False),encoding='utf-8')
 
 
-def propose_repairs(source, *, selected_residues=None, ph=7.4,
+def propose_repairs(source, *, selected_residues=None, ph=7.4, sequence_references=(),
                     progress=lambda *_: None, check_cancelled=lambda: None):
     """Produce a selectable preview. Manual scope uses exact model/chain/residue IDs."""
     if not math.isfinite(ph) or not 0 <= ph <= 14:
@@ -102,7 +105,7 @@ def propose_repairs(source, *, selected_residues=None, ph=7.4,
     available = all(v != 'Not installed' for v in backend.values())
     notes = [
         'Only model 1 is repaired. Other models and all nonstandard residues, cofactors, ligands, metals and waters are preserved.',
-        'No loops, missing residues, backbone N/CA/C rebuilding or general geometry refinement in this increment.',
+        'Missing-atom completion does not rebuild loops. Sequence-backed internal short loops are proposed separately and are opt-in; no backbone N/CA/C completion or general refinement.',
         'Existing coordinates remain fixed. Every reconstructed atom requires manual review; validation does not establish docking readiness.',
     ]
     if not available: notes.append('Install wavedock[repair] for template atom rebuilding and hydrogen addition. Conformer selection remains available.')
@@ -186,6 +189,10 @@ def propose_repairs(source, *, selected_residues=None, ph=7.4,
     if h_possible and protein_keys:
         changes.append(RepairChange('hydrogens','hydrogens',-1,-1,
             f'Add protein hydrogens at pH {ph:g} using default residue pKas; preserve heavy atoms and non-protein components',recommended=False))
+    if available:
+        from mds.chem.loops import propose_loops
+        loop_changes,loop_notes=propose_loops(source,st,segment_starts,sequence_references,selected_residues,check_cancelled=check_cancelled)
+        changes.extend(loop_changes);notes.extend(loop_notes)
     if fingerprint(source) != before.source_sha256:
         raise ValueError('Source changed during proposal; generate a new preview.')
     return RepairPlan(str(source),before.source_sha256,changes,notes,ph,before,backend,segment_starts)
@@ -275,6 +282,13 @@ def _write_structure(st, path, added, source_hash, source_path=None):
     else:
         doc = _mmcif_with_conect(st)
         block = doc.sole_block()
+        # Gemmi otherwise renumbers atom_site.id after inserting residues. Keep
+        # unique numeric atom IDs, including original IDs referenced by metadata.
+        serials=[a.serial for m in st for ch in m for r in ch for a in r]
+        if serials and min(serials)>0 and len(set(serials))==len(serials):
+            category=block.get_mmcif_category('_atom_site.')
+            category['id']=[str(n) for n in serials]
+            block.set_mmcif_category('_atom_site.',category)
         if source_path is not None and Path(source_path).suffix.lower() in ('.cif','.mmcif'):
             original=gemmi.cif.read_file(str(source_path))
             original_block=original.sole_block()
@@ -471,7 +485,7 @@ def _merge(st, additions):
         st[0][ci][ri].add_atom(atom)
 
 
-def _validate_additions(st, added_keys, bonds):
+def _validate_additions(st, added_keys, bonds, *, radii=None):
     """Check real merged geometry, including contacts with untouched cofactors."""
     atoms = {}
     for ci,ch in enumerate(st[0]):
@@ -507,7 +521,7 @@ def _validate_additions(st, added_keys, bonds):
                 blockers.append(f'Abnormal reconstructed bond angle {label(left)} / {label(center)} / {label(right)}: {angle:.2f} degrees.')
     for key in added_keys:
         if not graph[key]: blockers.append(f'Reconstructed atom has no bonded neighbours: {label(key)}.')
-    radii={**VDW,'H':1.1}
+    radii={**VDW,'H':1.1,**(radii or {})}
     grid=defaultdict(list)
     for key,atom in atoms.items():
         if atom.occ<=0 or atom.element.name not in radii: continue
@@ -546,6 +560,11 @@ def build_repairs(plan: RepairPlan, selected, output_dir, *, progress=lambda *_:
     choices={c.id:c for c in plan.changes}
     if not selected or set(selected)-choices.keys(): raise ValueError('Select valid proposed corrections first.')
     changes=[choices[key] for key in dict.fromkeys(selected)]
+    if any(c.kind=='loop' for c in changes):
+        if any(c.kind!='loop' for c in changes):
+            raise ValueError('Build loops separately from atom completion, conformer selection or hydrogens. Review and apply one stage first.')
+        from mds.chem.loops import build_loop_repairs
+        return build_loop_repairs(plan,changes,selected,output_dir,progress,check_cancelled)
     st=read_structure(source)
     original=atom_records(st)
     origin_indices=reconstructed_atom_indices(source,original)

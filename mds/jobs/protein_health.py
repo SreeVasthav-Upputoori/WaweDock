@@ -15,13 +15,14 @@ class ProteinHealthJob(Job):
 
 
 class ProteinRepairPlanJob(Job):
-    def __init__(self, source, selected_residues=None, ph=7.4):
+    def __init__(self, source, selected_residues=None, ph=7.4, sequence_references=()):
         self.source,self.selected_residues,self.ph=Path(source),selected_residues,ph
+        self.sequence_references=tuple(sequence_references)
         self.name='Preview protein repairs'
 
     def run(self,ctx):
         from mds.chem.repair import propose_repairs
-        return propose_repairs(self.source,selected_residues=self.selected_residues,ph=self.ph,
+        return propose_repairs(self.source,selected_residues=self.selected_residues,ph=self.ph,sequence_references=self.sequence_references,
                                progress=ctx.progress,check_cancelled=ctx.check_cancelled)
 
 

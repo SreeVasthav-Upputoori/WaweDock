@@ -15,9 +15,10 @@ class ProteinHealthSession(QObject):
     plan_ready = Signal(object)
     candidate_ready = Signal(object)
 
-    def __init__(self, runner, source, parent=None):
+    def __init__(self, runner, source, parent=None, sequence_references=lambda: ()):
         super().__init__(parent)
         self.source = source
+        self.sequence_references=sequence_references
         self.queue = LatestJobQueue(runner,self)
         self.busy = False
         runner.job_progress.connect(self._progress)
@@ -64,7 +65,7 @@ class ProteinHealthSession(QObject):
         if self.busy or self.source() is None: return
         self.invalidated.emit()
         self._busy(True)
-        try: self.queue.submit(ProteinRepairPlanJob(self.source(),selected_residues,ph),self._plan_done,self._failed)
+        try: self.queue.submit(ProteinRepairPlanJob(self.source(),selected_residues,ph,self.sequence_references()),self._plan_done,self._failed)
         except Exception as exc: self._failed(str(exc))
 
     def _plan_done(self,plan):

@@ -56,7 +56,7 @@ class ProteinHealthPanel(QWidget):
         repair_layout = QVBoxLayout(self.repair_group)
         self.repair_scope = QComboBox()
         self.repair_scope.addItems(['All protein residues','Viewer selection'])
-        self.repair_limits = QLabel('Atom completion and conformers only. Missing loops and residues are not rebuilt.')
+        self.repair_limits = QLabel('Atom completion and optional short-loop models (up to 8 residues). Loops require sequence evidence, are unchecked by default, and are built separately. Backbone torsion quality needs independent review.')
         self.repair_limits.setWordWrap(True)
         repair_layout.addWidget(self.repair_limits)
         repair_layout.addWidget(self.repair_scope)
@@ -158,6 +158,7 @@ class ProteinHealthPanel(QWidget):
         self.repair_btn.setEnabled(ready)
         checked=any(self.proposed_changes.item(i).checkState()==Qt.CheckState.Checked for i in range(self.proposed_changes.count()))
         self.build_btn.setEnabled(ready and self.repair_plan is not None and checked)
+        self.accept_btn.setText('Use loop model' if self.repair_result is not None and self.repair_result.loops else 'Use repaired structure')
         self.accept_btn.setEnabled(ready and self.repair_result is not None and self.repair_result.can_accept)
         self.comparison.setEnabled(not self._busy and self.repair_result is not None)
         self.undo_btn.setEnabled(not self._busy and self._can_undo)
@@ -301,7 +302,7 @@ class ProteinHealthPanel(QWidget):
             item.setCheckState(Qt.CheckState.Checked if change.recommended else Qt.CheckState.Unchecked)
             self.proposed_changes.addItem(item)
         self._filling=False
-        self.details.setPlainText('PROPOSED REPAIRS - no coordinates changed\nCheck the corrections to build. Hydrogen addition is opt-in. Choose only one conformer per residue.\n\n'+'\n'.join(plan.notes))
+        self.details.setPlainText('PROPOSED REPAIRS - no coordinates changed\nCheck the corrections to build. Hydrogens and short loops are opt-in. Build loops separately from atom completion. Choose only one conformer per residue.\n\n'+'\n'.join(plan.notes))
         self.summary.setText(f'{len(plan.changes)} proposed correction(s). Review choices before building.')
         self._availability()
 
@@ -309,6 +310,14 @@ class ProteinHealthPanel(QWidget):
         if self._filling or self.repair_plan is None: return
         choices={c.id:c for c in self.repair_plan.changes}
         change=choices.get(item.data(Qt.ItemDataRole.UserRole))
+        if change and item.checkState()==Qt.CheckState.Checked:
+            self._filling=True
+            for i in range(self.proposed_changes.count()):
+                other=self.proposed_changes.item(i)
+                c=choices[other.data(Qt.ItemDataRole.UserRole)]
+                if (change.kind=='loop') != (c.kind=='loop'):
+                    other.setCheckState(Qt.CheckState.Unchecked)
+            self._filling=False
         if change and change.kind=='altloc' and item.checkState()==Qt.CheckState.Checked:
             self._filling=True
             for i in range(self.proposed_changes.count()):
@@ -340,7 +349,7 @@ class ProteinHealthPanel(QWidget):
         after_warnings=sum(i.severity=='Warning' for i in result.after.issues)
         self.candidate_summary.setText(
             f'Before: {before_warnings} warning(s). After: {after_warnings} warning(s).\n'
-            f'{len(result.added)} new atom(s); 0 loops rebuilt. '+('Review required.' if result.can_accept else
+            f'{len(result.added)} new atom(s); {len(result.loops)} loop model(s) built. '+(('Geometry gates passed; backbone torsion review required.' if result.loops else 'Review required.') if result.can_accept else
             f'Blocked: {len(result.blockers)} validation finding(s).\n'+'\n'.join(result.blockers[:3])+
             ('\nSee validation details for remaining findings.' if len(result.blockers)>3 else '')))
         self.candidate_summary.show()
@@ -349,6 +358,13 @@ class ProteinHealthPanel(QWidget):
             f'\n\nComputational atoms added: {len(result.added)}\nAlternate atoms removed: {len(result.removed)}\nAlternate labels resolved: {len(result.normalised)}'+
             '\n\n'+('BLOCKERS\n'+'\n'.join(result.blockers) if result.blockers else 'Supported geometry gates passed; this is not a full stereochemical validation.')+
             '\n\n'+'\n'.join(result.warnings))
+        if result.loops:
+            text=self.details.toPlainText()+f'\n\nLOOP MODELLING\n{result.modelling.get("backend", "")}\nSelected seed: {result.modelling.get("selected_seed")}\n'
+            text+='Phi/psi angles below require independent conformational review; no statistical Ramachandran classification was performed.\n'
+            for metric in result.modelling.get('geometry',[]):
+                if 'residue' in metric:
+                    text+=f'{metric["residue"]}: phi {metric["phi_degrees"]:.1f}, psi {metric["psi_degrees"]:.1f} degrees\n'
+            self.details.setPlainText(text)
         self._availability()
         if self.isVisible(): self.comparison.setCurrentIndex(1)
 

@@ -107,7 +107,9 @@ class Controller(QObject):
         runner.job_failed.connect(self._job_failed)
         runner.job_cancelled.connect(self._job_cancelled)
         from mds.gui.health_session import ProteinHealthSession
-        self.protein_health = ProteinHealthSession(runner, lambda: self.source_pdb, self)
+        self.protein_health = ProteinHealthSession(runner, lambda: self.source_pdb, self,
+            sequence_references=lambda: sorted(p for p in (self.project.root/"originals").iterdir()
+                if p.suffix.lower() in (".pdb",".ent",".cif",".mmcif")) if self.project else ())
         self.structure_loaded.connect(self.protein_health.invalidate)
         self.structure_edited.connect(self.protein_health.invalidate)
         self.project_changed.connect(self.protein_health.invalidate)
