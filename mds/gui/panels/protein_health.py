@@ -55,7 +55,10 @@ class ProteinHealthPanel(QWidget):
         self.repair_group = QGroupBox('Proposed corrections')
         repair_layout = QVBoxLayout(self.repair_group)
         self.repair_scope = QComboBox()
-        self.repair_scope.addItems(['Auto Repair','Manual Repair'])
+        self.repair_scope.addItems(['All protein residues','Viewer selection'])
+        self.repair_limits = QLabel('Atom completion and conformers only. Missing loops and residues are not rebuilt.')
+        self.repair_limits.setWordWrap(True)
+        repair_layout.addWidget(self.repair_limits)
         repair_layout.addWidget(self.repair_scope)
         row = QHBoxLayout()
         row.addWidget(QLabel('Hydrogen pH'))
@@ -337,7 +340,9 @@ class ProteinHealthPanel(QWidget):
         after_warnings=sum(i.severity=='Warning' for i in result.after.issues)
         self.candidate_summary.setText(
             f'Before: {before_warnings} warning(s). After: {after_warnings} warning(s).\n'
-            f'{len(result.added)} new atom(s). '+('Review required.' if result.can_accept else 'Blocked; inspect validation details.'))
+            f'{len(result.added)} new atom(s); 0 loops rebuilt. '+('Review required.' if result.can_accept else
+            f'Blocked: {len(result.blockers)} validation finding(s).\n'+'\n'.join(result.blockers[:3])+
+            ('\nSee validation details for remaining findings.' if len(result.blockers)>3 else '')))
         self.candidate_summary.show()
         self.summary.setText('Candidate ready - new atoms cyan; review required.' if result.can_accept else 'Candidate blocked by geometry checks.')
         self.details.setPlainText('BEFORE\n'+result.plan.before.summary+'\n\nAFTER\n'+result.after.summary+

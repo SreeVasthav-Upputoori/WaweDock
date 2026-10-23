@@ -347,8 +347,8 @@ def _work_structure(st, *, protein_only=False, segment_starts=()):
         for ri,res in enumerate(chain):
             if protein_only and res.name not in SIDECHAINS: continue
             if len(wc) and ((ci,ri) in segment_starts or
-                    (protein_only and (previous is None or (previous.subchain and res.subchain and previous.subchain!=res.subchain) or previous.find_atom('C','*') is None or res.find_atom('N','*') is None or
-                     previous.find_atom('C','*').pos.dist(res.find_atom('N','*').pos)>1.8))):
+                    (previous is None or (previous.subchain and res.subchain and previous.subchain!=res.subchain) or previous.find_atom('C','*') is None or res.find_atom('N','*') is None or
+                     previous.find_atom('C','*').pos.dist(res.find_atom('N','*').pos)>1.8)):
                 model.add_chain(wc)
                 segment+=1
                 wc=gemmi.Chain(f'W{ci}_{segment}')
@@ -599,7 +599,9 @@ def build_repairs(plan: RepairPlan, selected, output_dir, *, progress=lambda *_:
             {(c.chain_index,c.residue_index) for c in changes if c.kind=='heavy_atoms'} for a in issue.atoms):
             blockers.append('Selected residue remains incomplete: '+issue.location)
     def issue_key(issue):
-        return (issue.code,tuple(sorted({(a['model'],a['chain_index'],a['residue_index'],a['atom'],a['x'],a['y'],a['z']) for a in issue.atoms})))
+        # Connectivity depends on C/N endpoints, not newly completed side chains.
+        atoms = [a for a in issue.atoms if a['atom'] in ('C','N')] if issue.code=='backbone_connectivity' else issue.atoms
+        return (issue.code,tuple(sorted({(a['model'],a['chain_index'],a['residue_index'],a['atom'],a['x'],a['y'],a['z']) for a in atoms})))
     previous_issues={issue_key(i) for i in plan.before.issues}
     modified=resolved|{(ci,ri) for ci,ri,_,_,_ in additions}
     for issue in after.issues:

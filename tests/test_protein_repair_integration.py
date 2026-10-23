@@ -34,6 +34,16 @@ def test_repair_preview_accept_undo_redo_and_viewer_styles(window,damaged):
     assert not js(w,f'!!objects[{preview}].editable')
     index=result.added[0]['atom_index']
     assert js(w,f"objects[{preview}].model.selectedAtoms({{}})[{index}].style.stick.color")=='#00d6d6'
+    # Original anchors are exposed with real parsed bonds even in ribbon view.
+    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CB'}})[0].style.stick")
+    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CA'}})[0].style.stick")
+    assert '0 loops rebuilt' in panel.candidate_summary.text()
+    assert 'not rebuilt' in panel.repair_limits.text()
+    from dataclasses import replace
+    panel._candidate_ready(replace(result,blockers=['Severe reconstructed-atom overlap: example, 1.42 A.']))
+    assert '1.42 A.' in panel.candidate_summary.text()
+    assert not panel.accept_btn.isEnabled()
+    panel._candidate_ready(result)
     panel.comparison.setCurrentIndex(0)
     assert not js(w,f'!!objects[{preview}]')
     assert w.project_explorer.is_visible(old_name)

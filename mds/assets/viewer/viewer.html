@@ -124,6 +124,22 @@ function highlightReconstructed(name, indices) {
 function applyReconstructed(o) {
   if (!o.reconstructedIndices || !o.visible) return;
   const chosen=new Set(o.reconstructedIndices);
+  const atoms=o.model.selectedAtoms({}), byIndex=new Map(atoms.map(a=>[a.index,a]));
+  // Follow actual parsed bonds within each affected residue to expose the original
+  // anchors hidden by cartoons. Never invent bonds across missing sequence gaps.
+  const context=new Set(chosen), pending=Array.from(chosen);
+  while (pending.length) {
+    const a=byIndex.get(pending.pop()); if (!a) continue;
+    for (const index of a.bonds || []) {
+      const b=byIndex.get(index);
+      const sameResidue=b && (a._wdIdentity && b._wdIdentity
+        ? residueKey(a)===residueKey(b)
+        : a.chain===b.chain && a.resi===b.resi && a.icode===b.icode && a.resn===b.resn);
+      if (sameResidue && !context.has(index)) { context.add(index); pending.push(index); }
+    }
+  }
+  viewer.addStyle({model:o.model.getID(),predicate:a=>context.has(a.index) && !chosen.has(a.index) && componentVisible(o,a)},
+                   {stick:{radius:0.12,colorscheme:'Jmol'}});
   viewer.addStyle({model:o.model.getID(),predicate:a=>chosen.has(a.index) && componentVisible(o,a)},
                    {stick:{radius:0.12,color:'#00d6d6'}});
 }

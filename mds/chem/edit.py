@@ -173,7 +173,10 @@ def _write_pdb(st: gemmi.Structure, dst: Path) -> None:
     if dst.suffix.lower() in (".cif", ".mmcif"):
         st.make_mmcif_document().write_file(str(dst))
     else:
-        st.write_minimal_pdb(str(dst))
+        options = gemmi.PdbWriteOptions()
+        options.preserve_serial = True
+        options.conect_records = True
+        st.write_pdb(str(dst), options)
 
 
 def summarise_selection(residues) -> str:

@@ -188,3 +188,41 @@ def test_modified_candidate_cannot_be_activated(qapp,damaged,tmp_path):
     assert not controller.accept_protein_repair(result)
     assert controller.source_pdb==original and not controller._undo_structures
     assert errors and 'changed' in errors[-1]
+
+
+def test_backend_snapshot_never_bonds_across_geometric_chain_breaks(tmp_path):
+    from mds.chem.repair import _work_structure
+    from openmm.app import PDBxFile
+    import io
+    path=structure_file(tmp_path,[('A',1,'GLY',GLY),('A',9,'GLY',translated(GLY,20))])
+    work,mapping=_work_structure(gemmi.read_structure(str(path)))
+    assert len(work[0])==2
+    assert set(mapping.values())=={(0,0),(0,1)}
+    topology=PDBxFile(io.StringIO(work.make_mmcif_document().as_string())).topology
+    assert all(a.residue.chain==b.residue.chain for a,b in topology.bonds())
+
+
+def test_completing_sidechain_does_not_reclassify_existing_backbone_gap(tmp_path):
+    st=gemmi.read_structure(str(DATA))
+    chain=st[0][0]
+    ri=next(i for i,r in enumerate(chain) if r.name=='SER' and i>0)
+    chain[ri].remove_atom('OG','*')
+    del chain[ri-1]
+    source=tmp_path/'gap.pdb'
+    st.write_pdb(str(source))
+    plan=propose_repairs(source)
+    assert any(i.code=='backbone_connectivity' for i in plan.before.issues)
+    result=build_repairs(plan,[c.id for c in plan.changes if c.kind=='heavy_atoms'],tmp_path/'candidate')
+    assert result.added
+    assert not any('backbone_connectivity' in b for b in result.blockers)
+
+
+def test_structural_edits_preserve_sequence_evidence(tmp_path):
+    from mds.chem.edit import edit_atoms,atom_records
+    path=structure_file(tmp_path,[('A',1,'GLY',GLY),('A',3,'SER',translated(GLY+[('CB',1.45,-1.4,0),('OG',1.45,-2.8,0)],20))],sequence=['GLY','ALA','SER'])
+    original=gemmi.read_structure(str(path))
+    target=tmp_path/'edited.pdb'
+    edit_atoms(path,target,[a for a in atom_records(original) if a['atom']=='OG'])
+    assert gemmi.read_structure(str(target)).entities[0].full_sequence==['GLY','ALA','SER']
+    from mds.chem.health import check_protein
+    assert any(i.code=='unmodelled_sequence' for i in check_protein(target).issues)
