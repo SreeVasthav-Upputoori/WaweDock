@@ -1,9 +1,10 @@
-"""Absolute-path entry point for source and pip Windows file associations."""
+"""Absolute-path entry point for Windows shortcuts and file associations."""
 from pathlib import Path
 import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from mds.app import main
-
-if __name__ == "__main__":
+if __name__=='__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
+    from mds.app import main
     raise SystemExit(main())

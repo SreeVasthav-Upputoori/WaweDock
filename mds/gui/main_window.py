@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import platform
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from rdkit import Chem
 from mds import APP_NAME, __version__
 from mds.chem.workflow import LigandOutcome
 from mds.core.paths import assets_dir
+from mds.core.startup import default_log_dir
 from mds.gui.actions import ActionRegistry
 from mds.gui.controller import Controller
 from mds.gui.layouts import LAYOUT_VERSION, LayoutManager
@@ -1051,8 +1051,3 @@ class MainWindow(QMainWindow):
         logging.getLogger("mds").removeHandler(self.log_panel.handler)
         log.info("%s closed", APP_NAME)
         event.accept()
-
-
-def default_log_dir() -> Path:
-    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    return Path(base or os.getcwd()) / "logs"

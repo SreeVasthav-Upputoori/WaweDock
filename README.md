@@ -15,6 +15,30 @@ cd "D:\Tools\WaweDock"
 python -m mds
 ```
 
+For a source checkout, `WaweDock.cmd` also launches from its own folder without
+activating the environment or relying on an old shortcut working directory.
+
+Startup logs are created **before** importing the GUI and chemistry libraries.
+If startup raises an exception, a Windows error dialog identifies the problem and
+the diagnostic report at `%LOCALAPPDATA%\WaweDock\WaweDock\logs\startup-error.txt`.
+The same folder contains `mds.log`, windowed-launch console output and native crash
+traces. If application data is unwritable, diagnostics use `%TEMP%\WaweDock\logs`.
+
+Run `.\.venv\Scripts\python.exe -m mds --startup-check` before distributing an
+updated installation. It uses isolated settings, verifies that the actual main
+window and 3D viewer become ready, and exits nonzero on import failures or timeout.
+It does not repair missing/blocked dependencies or modify Windows security policy.
+
+Windows Smart App Control can block an unsigned dependency even when the Python
+code is correct. The observed failure was RDKit's `RDKitRDInchiLib` DLL. Its policy
+event was `VerifiedAndReputableDesktop` (Code Integrity event 3077). Microsoft
+[does not provide per-app Smart App Control exceptions](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
+A supported distribution needs trusted signatures/reputation for its native
+libraries; signing only the outer executable does not ensure that its dependent
+DLLs will load. See [Microsoft's signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
+The launcher reports this condition; it does not bypass it. Normal GUI startup
+remained blocked by that policy in the current machine's final startup check.
+
 On Windows, WaweDock automatically adds itself to **Open with** on first launch,
 for PDB/mmCIF and supported molecular ligand files. This works in the packaged
 app and source/pip installations; it uses the installation's own executable or
