@@ -269,6 +269,9 @@ function batchLabelUpdates(update) {
   try { update(); }
   finally { viewer.show = show; show.call(viewer); }
 }
+// Beyond this many residues the labels overlap into an unreadable mass and are
+// slow to draw, so the whole-object labelling is left off instead.
+const LABEL_LIMIT = 600;
 function refreshObjectLabels(name) {
   const o = objects[name], residues = new Map();
   if (o.labels && o.visible) o.model.selectedAtoms({}).forEach(a => {
@@ -276,6 +279,13 @@ function refreshObjectLabels(name) {
     const key = JSON.stringify([a.chain, a.resi, a.icode, a.resn]);
     if (!residues.has(key)) residues.set(key, a);
   });
+  const overflow = residues.size > LABEL_LIMIT;
+  if (overflow) {
+    residues.clear();
+    if (!o.labelOverflow) emit("measure", "Residue labels are off above " + LABEL_LIMIT +
+      " residues; hide components or label a smaller structure.");
+  }
+  o.labelOverflow = overflow;
   // Representation and colour changes do not move residue labels.
   const keys = JSON.stringify(Array.from(residues.keys()));
   if (o.labelKeys === keys) return;
