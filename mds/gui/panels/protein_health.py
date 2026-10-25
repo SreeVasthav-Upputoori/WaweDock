@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QListWidget,
+from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtSvgWidgets import QSvgWidget
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QProgressBar, QPushButton, QScrollArea, QFrame, QSizePolicy, QTextBrowser,
                                QVBoxLayout, QWidget)
 
@@ -129,6 +130,11 @@ class ProteinHealthPanel(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._export)
         layout.addWidget(self.export_btn)
+        self.rama_btn = QPushButton('Ramachandran plot')
+        self.rama_btn.setEnabled(False)
+        self.rama_btn.setToolTip('Backbone phi/psi plot with a favored/allowed/outlier region screen. Coarse region boxes, not MolProbity contours.')
+        self.rama_btn.clicked.connect(self._show_ramachandran)
+        layout.addWidget(self.rama_btn)
         self.session.progress_changed.connect(self._progress)
         self.session.invalidated.connect(self.invalidate)
         self.session.busy_changed.connect(self._set_busy)
@@ -177,6 +183,7 @@ class ProteinHealthPanel(QWidget):
         self.issues.clear()
         self.details.clear()
         self.export_btn.setEnabled(False)
+        self.rama_btn.setEnabled(False)
         self.summary.setText('Structure changed. Run Check Protein on the current coordinates.')
         self._set_busy(False)
         self._highlights()
@@ -213,6 +220,7 @@ class ProteinHealthPanel(QWidget):
             self.issues.setUpdatesEnabled(True)
         self.details.setPlainText('SUPPORTED CHECKS\n' + '\n'.join(report.coverage) + '\n\nLIMITATIONS\n' + '\n'.join(report.limitations))
         self.export_btn.setEnabled(True)
+        self.rama_btn.setEnabled(bool(report.ramachandran))
         self._highlights()
 
     def _failed(self, message):
@@ -244,6 +252,26 @@ class ProteinHealthPanel(QWidget):
 
     def _highlights(self, *_):
         self.highlights_changed.emit(self.report if self.highlights.isChecked() else None)
+
+    def _show_ramachandran(self):
+        if self.report is None or not self.report.ramachandran: return
+        from mds.chem.ramachandran import render_svg
+        s = self.report.ramachandran_summary
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Ramachandran plot')
+        dlayout = QVBoxLayout(dialog)
+        caption = QLabel(f"{s['total']} residues  ·  favored {s['percent']['favored']}%  ·  "
+                         f"allowed {s['percent']['allowed']}%  ·  outlier {s['percent']['outlier']}%\n"
+                         "Region-based screen (general/glycine/proline); hover a point for its residue. "
+                         "Coarse region boxes, not MolProbity contours.")
+        caption.setWordWrap(True)
+        dlayout.addWidget(caption)
+        plot = QSvgWidget()
+        plot.load(QByteArray(render_svg(self.report.ramachandran).encode('utf-8')))
+        plot.setMinimumSize(440, 466)
+        dlayout.addWidget(plot, 1)
+        dialog.resize(480, 560)
+        dialog.exec()
 
     def _export(self):
         if self.report is None: return

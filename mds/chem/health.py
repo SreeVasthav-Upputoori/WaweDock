@@ -17,6 +17,7 @@ from typing import Callable
 import gemmi
 
 from mds.chem.edit import atom_records
+from mds.chem.ramachandran import compute_ramachandran, summarize as summarize_ramachandran
 from mds.chem.receptor import read_structure
 
 # Canonical heavy atoms only. OXT is deliberately optional at chain termini.
@@ -66,6 +67,8 @@ class HealthReport:
     coverage: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     backend: str = field(default_factory=lambda: f'Gemmi {gemmi.__version__}; WaweDock geometric screening v1')
+    ramachandran: list = field(default_factory=list)
+    ramachandran_summary: dict = field(default_factory=dict)
 
     def export(self, path: Path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2, allow_nan=False), encoding='utf-8')
@@ -102,10 +105,12 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
         'Severe heavy-atom overlap screen: van der Waals overlap > 0.8 A; excludes topology neighbours through two bonds, disulfides, metals and incompatible altlocs.',
         'Alternate conformers, protein hydrogen presence and nonstandard/component inventory.',
         'Unmodelled sequence regions only when entity sequence and label_seq alignment agree.',
+        'Backbone phi/psi Ramachandran region screen (favored/allowed/outlier) for general, glycine and proline residues.',
     ]
     report.limitations = [
         'Geometric screening is not a full stereochemical validation or a docking-readiness certificate.',
-        'Ramachandran, rotamer, hydrogen-bond, charge, pKa and force-field validation were not performed.',
+        'The Ramachandran screen uses fixed, generous phi/psi region boxes, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
+        'Rotamer, hydrogen-bond, charge, pKa and force-field validation were not performed.',
         'No crystallographic symmetry contacts, complete ligand topology or hydrogen clash analysis. Metal coordination is not validated.',
         'Sequence absence describes unmodelled coordinates; experimental disorder cannot be inferred from coordinates alone.',
         'No atoms or residues were rebuilt, minimised, removed or moved. All reported coordinates come from the input; their experimental/modelled provenance is unknown.',
@@ -311,6 +316,18 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
             f'Severe overlap candidate: {records[i]["atom"]}-{records[j]["atom"]}, {distance:.2f} A, van der Waals overlap {overlap:.2f} A.',
             'Inspect alternate conformers, covalent links and ligand chemistry before any local refinement.',[records[k] for pair in pairs for k in pair[:2]])
     check_cancelled()
+    progress(96, 'Screening backbone torsions (Ramachandran region screen)')
+    report.ramachandran = compute_ramachandran(st, check_cancelled=check_cancelled)
+    report.ramachandran_summary = summarize_ramachandran(report.ramachandran)
+    rama_selectors = {(ch.name or '', res.seqid.num, (res.seqid.icode or '').strip()): sel
+                      for ch, res, _, sel, protein in residues if protein}
+    for point in report.ramachandran:
+        if point.classification != 'outlier': continue
+        location = f'{point.chain or "(blank)"}:{point.seqid}{point.icode} {point.resname}'
+        add('ramachandran_outlier', 'Warning', location,
+            f'Backbone torsion outlier: phi {point.phi:.0f}, psi {point.psi:.0f} degrees, outside the allowed-region screen.',
+            'Review backbone geometry; consider restrained refinement. The region screen is coarse and is not a substitute for MolProbity.',
+            rama_selectors.get((point.chain, point.seqid, point.icode), []))
     if sha256(source.read_bytes()).hexdigest() != digest:
         raise RuntimeError('Structure changed while screening; run Check Protein again.')
     progress(100,'Protein screening complete; review findings and limits')
