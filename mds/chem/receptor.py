@@ -66,6 +66,46 @@ class HeteroResidue:
         return f"{self.name} {self.chain}:{self.number}"
 
 
+# Non-default states AMBER naming assigns, with the standard residue each comes
+# from and what it means. "alters_charge" marks the ones that change the formal
+# charge rather than only a tautomer or bonding choice, because those are what
+# shift binding-site electrostatics and most need review.
+PROTONATION_STATES = {
+    "HID": ("HIS", "neutral histidine, proton on ND1 (delta tautomer)", False),
+    "HIE": ("HIS", "neutral histidine, proton on NE2 (epsilon tautomer)", False),
+    "HIP": ("HIS", "doubly protonated histidine, carries +1", True),
+    "ASH": ("ASP", "neutral (protonated) aspartate; normally -1", True),
+    "GLH": ("GLU", "neutral (protonated) glutamate; normally -1", True),
+    "LYN": ("LYS", "neutral (deprotonated) lysine; normally +1", True),
+    "CYX": ("CYS", "cysteine in a disulfide bond, no thiol hydrogen", False),
+}
+
+
+@dataclass
+class ProtonationState:
+    chain: str
+    seqid: int
+    residue: str      # standard name, e.g. HIS
+    state: str        # assigned state, e.g. HIP
+    meaning: str
+    alters_charge: bool
+
+
+def collect_protonation(st: gemmi.Structure) -> list["ProtonationState"]:
+    """Per-residue non-default protonation/bonding states from AMBER naming."""
+    found: list[ProtonationState] = []
+    for chain in st[0]:
+        for res in chain:
+            # AMBER prefixes terminal residues, e.g. NHID / CHID.
+            key = res.name if res.name in PROTONATION_STATES else (
+                res.name[1:] if len(res.name) == 4 and res.name[1:] in PROTONATION_STATES else None)
+            if key is None:
+                continue
+            standard, meaning, alters = PROTONATION_STATES[key]
+            found.append(ProtonationState(chain.name or "", res.seqid.num, standard, key, meaning, alters))
+    return found
+
+
 @dataclass
 class ReceptorResult:
     pdbqt: Path
@@ -74,6 +114,7 @@ class ReceptorResult:
     hetero: list[HeteroResidue] = field(default_factory=list)
     n_atoms: int = 0
     n_residues: int = 0
+    protonation: list[ProtonationState] = field(default_factory=list)
 
 
 # --- inspection
@@ -415,13 +456,20 @@ def prepare_receptor(
             continue
         rep.warn(f"Residue {name} {chain}:{num}: {n} missing heavy atom(s) rebuilt by PDB2PQR "
                  "(side-chain placement is approximate).")
-    states = Counter(r.name for c in after_st[0] for r in c
-                     if r.name in {"HID", "HIE", "HIP", "ASH", "GLH", "LYN", "CYX"} or
-                     (len(r.name) == 4 and r.name[1:] in {"HID", "HIE", "HIP", "ASH", "GLH", "LYN", "CYX"}))
+    # Record which residue got which state, not just how many: a reviewer needs
+    # to know that His57 specifically is +1, and where it sits.
+    protonation = collect_protonation(after_st)
+    states = Counter(p.state for p in protonation)
     if states:
         rep.info("Predicted non-default protonation/bonding states at pH "
                  f"{opts.ph}: " + ", ".join(f"{n}x{s}" for s, n in sorted(states.items())) +
                  ". Review histidines and acids in the binding site before trusting results.")
+        charge_changing = [p for p in protonation if p.alters_charge]
+        for p in charge_changing[:25]:
+            rep.info(f"{p.residue} {p.chain}:{p.seqid} assigned {p.state}: {p.meaning}.")
+        if len(charge_changing) > 25:
+            rep.info(f"{len(charge_changing) - 25} further charge-changing assignment(s) "
+                     "are listed in the preparation result.")
 
     # -- re-attach metals and write final PDB
     prepared = out_dir / "receptor_prepared.pdb"
@@ -487,7 +535,7 @@ def prepare_receptor(
 
     n_atoms = validate_pdbqt(pdbqt, rep)
     rep.info(f"Receptor PDBQT written: {pdbqt.name} ({n_atoms} atoms).")
-    return ReceptorResult(pdbqt, prepared, rep, hetero, n_atoms, n_res_in)
+    return ReceptorResult(pdbqt, prepared, rep, hetero, n_atoms, n_res_in, protonation)
 
 
 def _minimal_pdb_text(st: gemmi.Structure, scratch: Path) -> str:
