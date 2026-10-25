@@ -16,6 +16,7 @@ from typing import Callable
 
 import gemmi
 
+from mds.chem.disulfides import find_disulfides
 from mds.chem.edit import atom_records
 from mds.chem.ramachandran import compute_ramachandran, summarize as summarize_ramachandran
 from mds.chem.receptor import read_structure
@@ -69,6 +70,8 @@ class HealthReport:
     backend: str = field(default_factory=lambda: f'Gemmi {gemmi.__version__}; WaweDock geometric screening v1')
     ramachandran: list = field(default_factory=list)
     ramachandran_summary: dict = field(default_factory=dict)
+    disulfides: list = field(default_factory=list)
+    free_cysteines: list = field(default_factory=list)
 
     def export(self, path: Path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2, allow_nan=False), encoding='utf-8')
@@ -106,10 +109,12 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
         'Alternate conformers, protein hydrogen presence and nonstandard/component inventory.',
         'Unmodelled sequence regions only when entity sequence and label_seq alignment agree.',
         'Backbone phi/psi Ramachandran region screen (favored/allowed/outlier) for general, glycine and proline residues.',
+        'Disulfide bonds from cysteine SG-SG distance (1.8-2.5 A) and an inventory of free cysteines.',
     ]
     report.limitations = [
         'Geometric screening is not a full stereochemical validation or a docking-readiness certificate.',
         'The Ramachandran screen uses fixed, generous phi/psi region boxes, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
+        'Disulfides are assigned by SG-SG distance only; oxidation-state labels, cross-link chemistry and non-Cys covalent links are not verified.',
         'Rotamer, hydrogen-bond, charge, pKa and force-field validation were not performed.',
         'No crystallographic symmetry contacts, complete ligand topology or hydrogen clash analysis. Metal coordination is not validated.',
         'Sequence absence describes unmodelled coordinates; experimental disorder cannot be inferred from coordinates alone.',
@@ -319,15 +324,33 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
     progress(96, 'Screening backbone torsions (Ramachandran region screen)')
     report.ramachandran = compute_ramachandran(st, check_cancelled=check_cancelled)
     report.ramachandran_summary = summarize_ramachandran(report.ramachandran)
-    rama_selectors = {(ch.name or '', res.seqid.num, (res.seqid.icode or '').strip()): sel
-                      for ch, res, _, sel, protein in residues if protein}
+    residue_selectors = {(ch.name or '', res.seqid.num, (res.seqid.icode or '').strip()): sel
+                         for ch, res, _, sel, protein in residues if protein}
     for point in report.ramachandran:
         if point.classification != 'outlier': continue
         location = f'{point.chain or "(blank)"}:{point.seqid}{point.icode} {point.resname}'
         add('ramachandran_outlier', 'Warning', location,
             f'Backbone torsion outlier: phi {point.phi:.0f}, psi {point.psi:.0f} degrees, outside the allowed-region screen.',
             'Review backbone geometry; consider restrained refinement. The region screen is coarse and is not a substitute for MolProbity.',
-            rama_selectors.get((point.chain, point.seqid, point.icode), []))
+            residue_selectors.get((point.chain, point.seqid, point.icode), []))
+    progress(98, 'Detecting disulfide bonds')
+    report.disulfides, report.free_cysteines = find_disulfides(st, check_cancelled=check_cancelled)
+    for ss in report.disulfides:
+        location = (f'{ss.chain_a or "(blank)"}:{ss.seqid_a}{ss.icode_a} - '
+                    f'{ss.chain_b or "(blank)"}:{ss.seqid_b}{ss.icode_b}')
+        selectors = (residue_selectors.get((ss.chain_a, ss.seqid_a, ss.icode_a), [])
+                     + residue_selectors.get((ss.chain_b, ss.seqid_b, ss.icode_b), []))
+        add('disulfide_bond', 'Note', location,
+            f'Disulfide bond: cysteine SG-SG distance {ss.distance:.2f} A.',
+            'Preserve this bridge during preparation; treat both cysteines as oxidised (no added thiol hydrogen).',
+            selectors)
+    if report.free_cysteines:
+        free_selectors = [item for fc in report.free_cysteines
+                          for item in residue_selectors.get((fc['chain'], fc['seqid'], fc['icode']), [])]
+        add('free_cysteine', 'Note', 'Protein',
+            f'{len(report.free_cysteines)} free cysteine(s) not in a disulfide bond within the 1.8-2.5 A window.',
+            'Review reduced-thiol protonation and possible metal or ligand coordination before preparation.',
+            free_selectors)
     if sha256(source.read_bytes()).hexdigest() != digest:
         raise RuntimeError('Structure changed while screening; run Check Protein again.')
     progress(100,'Protein screening complete; review findings and limits')
