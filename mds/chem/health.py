@@ -112,6 +112,9 @@ def build_assessment(report: 'HealthReport', residues: int) -> dict:
         'residues_missing_atoms': code_count('missing_atoms'),
         'unmodelled_regions': code_count('unmodelled_sequence'),
         'alternate_conformations': code_count('alternate_conformations'),
+        # A preparation concern rather than a geometry defect, so it is reported
+        # but deliberately carries no score penalty.
+        'artificial_termini': code_count('artificial_terminus'),
         'disulfides': len(report.disulfides),
         'free_cysteines': len(report.free_cysteines),
     }
@@ -165,11 +168,13 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
         'Backbone phi/psi Ramachandran region screen (favored/allowed/outlier) for general, glycine and proline residues.',
         'Disulfide bonds from cysteine SG-SG distance (1.8-2.5 A) and an inventory of free cysteines.',
         'Side-chain rotamer screen: sp3 chi torsions versus ideal staggered positions (favored/allowed/outlier).',
+        'Chain termini classified as true sequence ends or truncation artefacts, where entity-sequence alignment allows.',
     ]
     report.limitations = [
         'Geometric screening is not a full stereochemical validation or a docking-readiness certificate.',
         'The Ramachandran screen uses fixed, generous phi/psi region boxes, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
         'Disulfides are assigned by SG-SG distance only; oxidation-state labels, cross-link chemistry and non-Cys covalent links are not verified.',
+        'Termini are judged against the deposited entity sequence, not the full biological protein: an expression construct that is fully modelled shows no truncation even where the native chain continues.',
         'The rotamer screen compares only sp3 chi torsions to ideal staggered angles (+/-60/180); it is not a rotamer-library or MolProbity percentile analysis, and planar/aromatic terminal chi angles and proline are not assessed.',
         'Hydrogen-bond, charge, pKa and force-field validation were not performed.',
         'No crystallographic symmetry contacts, complete ligand topology or hydrogen clash analysis. Metal coordination is not validated.',
@@ -348,6 +353,23 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
                 f'{len(run)} entity-sequence residue(s) have no modelled coordinates' + (' at a sequence terminus.' if terminal else '.'),
                 'Review experimental metadata and target sequence; reconstruction is computational and requires independent validation.',
                 [item for group in neighbours for item in group])
+        # A chain end that is not the real sequence end is a truncation artefact.
+        # Preparation still gives it a full formal charge the intact protein does
+        # not carry there, which distorts electrostatics near a docking site.
+        for kind, label, missing in (('N', min(observed), min(observed) - 1),
+                                     ('C', max(observed), len(sequence) - max(observed))):
+            if missing <= 0: continue
+            entry = next((p for p in poly if p[0].label_seq == label), None)
+            if entry is None: continue
+            residue, selectors = entry[0], entry[2]
+            group = 'amine (+1)' if kind == 'N' else 'carboxylate (-1)'
+            add('artificial_terminus', 'Warning',
+                f'{chain.name or "(blank)"}:{residue.seqid} {residue.name}',
+                f'{kind}-terminus is a truncation, not the true chain end: {missing} '
+                f'entity-sequence residue(s) continue beyond it, so the free {group} here is an artefact.',
+                'Cap or neutralise this end before preparation, especially if it lies near the docking site; '
+                'otherwise it contributes a charge the intact protein does not have.',
+                selectors)
     progress(55, 'Screening severe nonbonded heavy-atom overlaps')
     cells = defaultdict(list)
     clashes = defaultdict(list)
