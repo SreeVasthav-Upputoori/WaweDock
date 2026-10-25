@@ -123,8 +123,15 @@ function highlightReconstructed(name, indices) {
 }
 function applyReconstructed(o) {
   if (!o.reconstructedIndices || !o.visible) return;
-  const chosen=new Set(o.reconstructedIndices);
   const atoms=o.model.selectedAtoms({}), byIndex=new Map(atoms.map(a=>[a.index,a]));
+  // Whole-protein protonation reconstructs a hydrogen on nearly every residue.
+  // Seeding the residue-context walk from those would stick-render the entire
+  // structure on top of the cartoon and hide the protein, so seed only from
+  // reconstructed heavy atoms. Hydrogens stay visible via the component toggle.
+  const chosen=new Set(o.reconstructedIndices.filter(i => {
+    const a=byIndex.get(i); return a && !["H","D"].includes(a.elem);
+  }));
+  if (!chosen.size) return;
   // Follow actual parsed bonds within each affected residue to expose the original
   // anchors hidden by cartoons. Never invent bonds across missing sequence gaps.
   const context=new Set(chosen), pending=Array.from(chosen);
@@ -138,8 +145,13 @@ function applyReconstructed(o) {
       if (sameResidue && !context.has(index)) { context.add(index); pending.push(index); }
     }
   }
-  viewer.addStyle({model:o.model.getID(),predicate:a=>context.has(a.index) && !chosen.has(a.index) && componentVisible(o,a)},
-                   {stick:{radius:0.12,colorscheme:'Jmol'}});
+  // A repair spanning most of the model cannot be shown as an all-atom overlay
+  // without burying the representation underneath it; keep the reconstructed
+  // atoms marked and drop the surrounding context in that case.
+  if (context.size <= 150 || context.size <= atoms.length * 0.25) {
+    viewer.addStyle({model:o.model.getID(),predicate:a=>context.has(a.index) && !chosen.has(a.index) && componentVisible(o,a)},
+                     {stick:{radius:0.12,colorscheme:'Jmol'}});
+  }
   viewer.addStyle({model:o.model.getID(),predicate:a=>chosen.has(a.index) && componentVisible(o,a)},
                    {stick:{radius:0.12,color:'#00d6d6'}});
 }

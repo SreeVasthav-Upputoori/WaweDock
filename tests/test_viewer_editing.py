@@ -725,3 +725,35 @@ def test_controller_delete_and_undo_preserve_viewer_colors(live_window):
     assert wait_until(lambda:bool(js(w.viewer,f"!!objects[{json.dumps(old)}]")),10)
     assert js(w.viewer,f"objects[{json.dumps(old)}].customColor")=='#bada55'
     assert js(w.viewer,'backgroundColor')=='#203040'
+
+
+def test_reconstructed_hydrogens_do_not_bury_the_representation(live_window):
+    """Whole-protein protonation must not stick-render the model over its cartoon."""
+    w = live_window
+    pdb = (
+        "ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00 20.00           N  \n"
+        "ATOM      2  CA  GLY A   1       1.458   0.000   0.000  1.00 20.00           C  \n"
+        "ATOM      3  C   GLY A   1       2.009   1.420   0.000  1.00 20.00           C  \n"
+        "ATOM      4  O   GLY A   1       1.251   2.390   0.000  1.00 20.00           O  \n"
+        "ATOM      5  HA2 GLY A   1       1.800  -0.500   0.900  1.00 20.00           H  \n"
+        "ATOM      6  N   GLY A   2       3.332   1.550   0.000  1.00 20.00           N  \n"
+        "ATOM      7  CA  GLY A   2       3.970   2.850   0.000  1.00 20.00           C  \n"
+        "ATOM      8  C   GLY A   2       5.480   2.700   0.000  1.00 20.00           C  \n"
+        "ATOM      9  O   GLY A   2       6.000   1.590   0.000  1.00 20.00           O  \n"
+        "ATOM     10  HA2 GLY A   2       3.650   3.400   0.880  1.00 20.00           H  \n"
+        "END\n"
+    )
+    w.viewer.add_object('rebuild-test', pdb, 'pdb', 'protein')
+    assert js(w.viewer, "objects['rebuild-test'].model.selectedAtoms({elem:'H'}).length") == 2
+    # Reconstructed hydrogens alone must not pull their whole residue into sticks.
+    assert js(w.viewer, """(() => {
+      const o = objects['rebuild-test'];
+      highlightReconstructed('rebuild-test', o.model.selectedAtoms({elem:'H'}).map(a => a.index));
+      return o.model.selectedAtoms({}).every(a => !a.style.stick);
+    })()""")
+    # A genuine reconstructed heavy atom is still highlighted.
+    assert js(w.viewer, """(() => {
+      const o = objects['rebuild-test'];
+      highlightReconstructed('rebuild-test', [o.model.selectedAtoms({atom:'CA'})[0].index]);
+      return !!o.model.selectedAtoms({atom:'CA'})[0].style.stick;
+    })()""")
