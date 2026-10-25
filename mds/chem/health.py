@@ -115,11 +115,15 @@ def build_assessment(report: 'HealthReport', residues: int) -> dict:
         'disulfides': len(report.disulfides),
         'free_cysteines': len(report.free_cysteines),
     }
-    penalty = (rama.get('outlier', 0.0) * 2.0
-               + rota.get('outlier', 0.0) * 1.0
-               + per100(metrics['steric_clashes']) * 4.0
-               + per100(metrics['residues_missing_atoms']) * 1.5
-               + per100(metrics['unmodelled_regions']) * 1.0)
+    # Each term is capped so no single metric can sink the score on its own:
+    # without it an old, clash-rich entry saturates at 0 and the scale stops
+    # discriminating between "poor" and "unusable".
+    def capped(value): return min(value, 40.0)
+    penalty = (capped(rama.get('outlier', 0.0) * 2.0)
+               + capped(rota.get('outlier', 0.0) * 1.0)
+               + capped(per100(metrics['steric_clashes']) * 1.0)
+               + capped(per100(metrics['residues_missing_atoms']) * 1.5)
+               + capped(per100(metrics['unmodelled_regions']) * 1.0))
     score = max(0, min(100, round(100 - penalty)))
     grade = ('Excellent' if score >= 90 else 'Good' if score >= 75
              else 'Fair' if score >= 60 else 'Poor')
@@ -128,8 +132,9 @@ def build_assessment(report: 'HealthReport', residues: int) -> dict:
         'grade': grade,
         'metrics': metrics,
         'score_formula': ('100 - 2*rama_outlier% - 1*rotamer_outlier% '
-                          '- 4*clashes/100res - 1.5*missing-atom residues/100res '
-                          '- 1*unmodelled regions/100res, clamped to 0-100'),
+                          '- 1*clashes/100res - 1.5*missing-atom residues/100res '
+                          '- 1*unmodelled regions/100res; each term capped at 40, '
+                          'total clamped to 0-100'),
         'note': ('Heuristic convenience roll-up of the individual screens for a '
                  'quick read; NOT a validated structure-quality metric such as '
                  'the MolProbity score. Weigh the individual findings directly.'),
