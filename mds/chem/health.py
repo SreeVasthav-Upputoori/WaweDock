@@ -75,6 +75,7 @@ class HealthReport:
     free_cysteines: list = field(default_factory=list)
     rotamers: list = field(default_factory=list)
     rotamers_summary: dict = field(default_factory=dict)
+    assessment: dict = field(default_factory=dict)
 
     def export(self, path: Path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2, allow_nan=False), encoding='utf-8')
@@ -88,6 +89,51 @@ class HealthReport:
 
 def _compatible(a, b):
     return not a.altloc.strip('\0 ') or not b.altloc.strip('\0 ') or a.altloc == b.altloc
+
+
+def build_assessment(report: 'HealthReport', residues: int) -> dict:
+    """Roll the individual screens up into one summary with a heuristic score.
+
+    The score is a transparent convenience roll-up of the screens already in
+    the report, NOT a validated metric such as the MolProbity score. The exact
+    penalty formula is returned in the result so nothing is hidden.
+    """
+    def code_count(code): return sum(i.code == code for i in report.issues)
+    per100 = (lambda n: 100.0 * n / residues) if residues else (lambda n: 0.0)
+    rama = report.ramachandran_summary.get('percent', {})
+    rota = report.rotamers_summary.get('percent', {})
+    metrics = {
+        'residues': residues,
+        'ramachandran_favored_percent': rama.get('favored', 0.0),
+        'ramachandran_outliers': report.ramachandran_summary.get('counts', {}).get('outlier', 0),
+        'rotamer_favored_percent': rota.get('favored', 0.0),
+        'rotamer_outliers': report.rotamers_summary.get('counts', {}).get('outlier', 0),
+        'steric_clashes': code_count('steric_overlap'),
+        'residues_missing_atoms': code_count('missing_atoms'),
+        'unmodelled_regions': code_count('unmodelled_sequence'),
+        'alternate_conformations': code_count('alternate_conformations'),
+        'disulfides': len(report.disulfides),
+        'free_cysteines': len(report.free_cysteines),
+    }
+    penalty = (rama.get('outlier', 0.0) * 2.0
+               + rota.get('outlier', 0.0) * 1.0
+               + per100(metrics['steric_clashes']) * 4.0
+               + per100(metrics['residues_missing_atoms']) * 1.5
+               + per100(metrics['unmodelled_regions']) * 1.0)
+    score = max(0, min(100, round(100 - penalty)))
+    grade = ('Excellent' if score >= 90 else 'Good' if score >= 75
+             else 'Fair' if score >= 60 else 'Poor')
+    return {
+        'score': score,
+        'grade': grade,
+        'metrics': metrics,
+        'score_formula': ('100 - 2*rama_outlier% - 1*rotamer_outlier% '
+                          '- 4*clashes/100res - 1.5*missing-atom residues/100res '
+                          '- 1*unmodelled regions/100res, clamped to 0-100'),
+        'note': ('Heuristic convenience roll-up of the individual screens for a '
+                 'quick read; NOT a validated structure-quality metric such as '
+                 'the MolProbity score. Weigh the individual findings directly.'),
+    }
 
 
 def check_protein(source: Path, *, progress: Callable = lambda *_: None,
@@ -367,6 +413,7 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
             f'Side-chain rotamer outlier: chi angles [{chi_text}] degrees are far from ideal staggered positions.',
             'Review the side-chain conformation; consider a rotamer correction. The screen checks staggered sp3 chi torsions only, not a rotamer library.',
             residue_selectors.get((rot.chain, rot.seqid, rot.icode), []))
+    report.assessment = build_assessment(report, sum(1 for *_, protein in residues if protein))
     if sha256(source.read_bytes()).hexdigest() != digest:
         raise RuntimeError('Structure changed while screening; run Check Protein again.')
     progress(100,'Protein screening complete; review findings and limits')

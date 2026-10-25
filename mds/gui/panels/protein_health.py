@@ -130,6 +130,11 @@ class ProteinHealthPanel(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._export)
         layout.addWidget(self.export_btn)
+        self.report_summary_btn = QPushButton('Protein report')
+        self.report_summary_btn.setEnabled(False)
+        self.report_summary_btn.setToolTip('Consolidated quality summary with a heuristic score. A convenience roll-up of the screens, not a validated metric.')
+        self.report_summary_btn.clicked.connect(self._show_report_summary)
+        layout.addWidget(self.report_summary_btn)
         self.rama_btn = QPushButton('Ramachandran plot')
         self.rama_btn.setEnabled(False)
         self.rama_btn.setToolTip('Backbone phi/psi plot with a favored/allowed/outlier region screen. Coarse region boxes, not MolProbity contours.')
@@ -183,6 +188,7 @@ class ProteinHealthPanel(QWidget):
         self.issues.clear()
         self.details.clear()
         self.export_btn.setEnabled(False)
+        self.report_summary_btn.setEnabled(False)
         self.rama_btn.setEnabled(False)
         self.summary.setText('Structure changed. Run Check Protein on the current coordinates.')
         self._set_busy(False)
@@ -220,6 +226,7 @@ class ProteinHealthPanel(QWidget):
             self.issues.setUpdatesEnabled(True)
         self.details.setPlainText('SUPPORTED CHECKS\n' + '\n'.join(report.coverage) + '\n\nLIMITATIONS\n' + '\n'.join(report.limitations))
         self.export_btn.setEnabled(True)
+        self.report_summary_btn.setEnabled(bool(report.assessment))
         self.rama_btn.setEnabled(bool(report.ramachandran))
         self._highlights()
 
@@ -252,6 +259,38 @@ class ProteinHealthPanel(QWidget):
 
     def _highlights(self, *_):
         self.highlights_changed.emit(self.report if self.highlights.isChecked() else None)
+
+    def _show_report_summary(self):
+        if self.report is None or not self.report.assessment: return
+        a = self.report.assessment
+        m = a['metrics']
+        colour = {'Excellent': '#2e7d32', 'Good': '#558b2f', 'Fair': '#e8820c', 'Poor': '#d32f2f'}.get(a['grade'], '#555')
+        rows = [
+            ('Protein residues', m['residues']),
+            ('Ramachandran favored', f"{m['ramachandran_favored_percent']}%  ({m['ramachandran_outliers']} outlier)"),
+            ('Rotamer favored', f"{m['rotamer_favored_percent']}%  ({m['rotamer_outliers']} outlier)"),
+            ('Steric clashes', m['steric_clashes']),
+            ('Residues missing atoms', m['residues_missing_atoms']),
+            ('Unmodelled regions', m['unmodelled_regions']),
+            ('Alternate conformations', m['alternate_conformations']),
+            ('Disulfide bonds', m['disulfides']),
+            ('Free cysteines', m['free_cysteines']),
+        ]
+        table = ''.join(f'<tr><td>{name}</td><td align="right"><b>{value}</b></td></tr>' for name, value in rows)
+        html = (f'<div style="font-size:30px;font-weight:700;color:{colour}">{a["score"]}'
+                f'<span style="font-size:14px;color:#777">/100</span>'
+                f'&nbsp;<span style="font-size:16px;color:{colour}">{a["grade"]}</span></div>'
+                f'<table cellpadding="4" width="100%">{table}</table>'
+                f'<p style="color:#777;font-size:11px">Score = {a["score_formula"]}.</p>'
+                f'<p style="color:#b00;font-size:11px">{a["note"]}</p>')
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Protein report')
+        dlayout = QVBoxLayout(dialog)
+        view = QTextBrowser()
+        view.setHtml(html)
+        dlayout.addWidget(view)
+        dialog.resize(420, 480)
+        dialog.exec()
 
     def _show_ramachandran(self):
         if self.report is None or not self.report.ramachandran: return
