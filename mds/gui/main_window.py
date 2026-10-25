@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
         self._source_object = ""
         self._repair_preview_visibility = {}
         self._repair_preview_name = "health: repair preview"
+        # Rebuilt-atom markers per object, so the overlay can be switched off
+        # again instead of being stuck on once a repair has been shown.
+        self._reconstructed: dict[str, list] = {}
         self._reference_objects: list[str] = []
         self._workspace_mode = 0
         self._modeling_state = None
@@ -441,6 +444,7 @@ class MainWindow(QMainWindow):
         self.docking_panel.protein_health_requested.connect(self._show_protein_health)
         self.health_panel.issue_requested.connect(self._focus_health_issue)
         self.health_panel.highlights_changed.connect(self._health_highlights)
+        self.health_panel.rebuilt_highlights_changed.connect(self._rebuilt_highlights)
         self.health_panel.comparison_requested.connect(self._repair_comparison)
         self.dock_health.visibilityChanged.connect(self._health_visibility)
         ex.item_selected.connect(self._on_item_selected)
@@ -535,7 +539,22 @@ class MainWindow(QMainWindow):
         text=st.make_mmcif_document().as_string() if fmt=='cif' else st.make_pdb_string()
         self.viewer.add_object(self._repair_preview_name,text,fmt,'protein',None,True)
         self.viewer.copy_appearance(self._source_object,self._repair_preview_name)
-        self.viewer.highlight_reconstructed(self._repair_preview_name,[a['atom_index'] for a in result.added+result.inherited])
+        self._set_reconstructed(self._repair_preview_name,[a['atom_index'] for a in result.added+result.inherited])
+
+    def _set_reconstructed(self, name: str, indices) -> None:
+        """Remember an object's rebuilt atoms and draw them if the toggle is on."""
+        self._reconstructed[name] = list(indices)
+        if self.viewer:
+            self.viewer.highlight_reconstructed(name, self._reconstructed[name] if self._show_rebuilt() else [])
+
+    def _show_rebuilt(self) -> bool:
+        return self.health_panel.rebuilt_highlights.isChecked()
+
+    def _rebuilt_highlights(self, on: bool) -> None:
+        if not self.viewer:
+            return
+        for name, indices in self._reconstructed.items():
+            self.viewer.highlight_reconstructed(name, indices if on else [])
 
     def _health_highlights(self, report) -> None:
         if self.viewer:
@@ -614,7 +633,7 @@ class MainWindow(QMainWindow):
         if self.viewer:
             from mds.chem.repair import reconstructed_atom_indices
             reconstructed=reconstructed_atom_indices(Path(path),atom_records(st))
-            if reconstructed: self.viewer.highlight_reconstructed(name,reconstructed)
+            if reconstructed: self._set_reconstructed(name,reconstructed)
         h = self.controller.hetero
         waters = sum(1 for x in h if x.kind == "water")
         ligs = [x.label for x in h if x.kind == "ligand"]

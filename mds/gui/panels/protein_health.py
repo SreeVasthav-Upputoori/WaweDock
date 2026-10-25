@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QF
 class ProteinHealthPanel(QWidget):
     issue_requested = Signal(object)
     highlights_changed = Signal(object)
+    rebuilt_highlights_changed = Signal(bool)
     comparison_requested = Signal(str)
 
     def __init__(self, controller, parent=None):
@@ -113,6 +114,11 @@ class ProteinHealthPanel(QWidget):
         self.highlights.setToolTip('Small crosses: red errors, orange warnings, blue notes. Selection remains yellow. At most 250 markers are drawn; the issue list is authoritative.')
         self.highlights.toggled.connect(self._highlights)
         layout.addWidget(self.highlights)
+        self.rebuilt_highlights = QCheckBox('Show rebuilt atoms')
+        self.rebuilt_highlights.setChecked(True)
+        self.rebuilt_highlights.setToolTip('Mark computationally rebuilt atoms (completed side chains and modelled loops) in cyan. Turn off to view the structure without the overlay.')
+        self.rebuilt_highlights.toggled.connect(self.rebuilt_highlights_changed)
+        layout.addWidget(self.rebuilt_highlights)
         self.issue_heading=QLabel('Current structure issues')
         self.issue_heading.setWordWrap(True)
         layout.addWidget(self.issue_heading)
