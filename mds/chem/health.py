@@ -20,6 +20,7 @@ from mds.chem.disulfides import find_disulfides
 from mds.chem.edit import atom_records
 from mds.chem.ramachandran import compute_ramachandran, summarize as summarize_ramachandran
 from mds.chem.receptor import read_structure
+from mds.chem.rotamers import compute_rotamers, summarize as summarize_rotamers
 
 # Canonical heavy atoms only. OXT is deliberately optional at chain termini.
 SIDECHAINS = {
@@ -72,6 +73,8 @@ class HealthReport:
     ramachandran_summary: dict = field(default_factory=dict)
     disulfides: list = field(default_factory=list)
     free_cysteines: list = field(default_factory=list)
+    rotamers: list = field(default_factory=list)
+    rotamers_summary: dict = field(default_factory=dict)
 
     def export(self, path: Path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2, allow_nan=False), encoding='utf-8')
@@ -110,12 +113,14 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
         'Unmodelled sequence regions only when entity sequence and label_seq alignment agree.',
         'Backbone phi/psi Ramachandran region screen (favored/allowed/outlier) for general, glycine and proline residues.',
         'Disulfide bonds from cysteine SG-SG distance (1.8-2.5 A) and an inventory of free cysteines.',
+        'Side-chain rotamer screen: sp3 chi torsions versus ideal staggered positions (favored/allowed/outlier).',
     ]
     report.limitations = [
         'Geometric screening is not a full stereochemical validation or a docking-readiness certificate.',
         'The Ramachandran screen uses fixed, generous phi/psi region boxes, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
         'Disulfides are assigned by SG-SG distance only; oxidation-state labels, cross-link chemistry and non-Cys covalent links are not verified.',
-        'Rotamer, hydrogen-bond, charge, pKa and force-field validation were not performed.',
+        'The rotamer screen compares only sp3 chi torsions to ideal staggered angles (+/-60/180); it is not a rotamer-library or MolProbity percentile analysis, and planar/aromatic terminal chi angles and proline are not assessed.',
+        'Hydrogen-bond, charge, pKa and force-field validation were not performed.',
         'No crystallographic symmetry contacts, complete ligand topology or hydrogen clash analysis. Metal coordination is not validated.',
         'Sequence absence describes unmodelled coordinates; experimental disorder cannot be inferred from coordinates alone.',
         'No atoms or residues were rebuilt, minimised, removed or moved. All reported coordinates come from the input; their experimental/modelled provenance is unknown.',
@@ -351,6 +356,17 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
             f'{len(report.free_cysteines)} free cysteine(s) not in a disulfide bond within the 1.8-2.5 A window.',
             'Review reduced-thiol protonation and possible metal or ligand coordination before preparation.',
             free_selectors)
+    progress(99, 'Screening side-chain rotamers')
+    report.rotamers = compute_rotamers(st, check_cancelled=check_cancelled)
+    report.rotamers_summary = summarize_rotamers(report.rotamers)
+    for rot in report.rotamers:
+        if rot.classification != 'outlier': continue
+        location = f'{rot.chain or "(blank)"}:{rot.seqid}{rot.icode} {rot.resname}'
+        chi_text = ', '.join(f'{value:.0f}' for value in rot.chis)
+        add('rotamer_outlier', 'Warning', location,
+            f'Side-chain rotamer outlier: chi angles [{chi_text}] degrees are far from ideal staggered positions.',
+            'Review the side-chain conformation; consider a rotamer correction. The screen checks staggered sp3 chi torsions only, not a rotamer library.',
+            residue_selectors.get((rot.chain, rot.seqid, rot.icode), []))
     if sha256(source.read_bytes()).hexdigest() != digest:
         raise RuntimeError('Structure changed while screening; run Check Protein again.')
     progress(100,'Protein screening complete; review findings and limits')
