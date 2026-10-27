@@ -56,15 +56,23 @@ def find_disulfides(st, *, check_cancelled: Callable = lambda: None):
                     sgs.append((chain.name or '', res.seqid.num, (res.seqid.icode or '').strip(), pos))
     bonds: list[Disulfide] = []
     bonded: set[int] = set()
+    candidates = []
     for i in range(len(sgs)):
         check_cancelled()
         for j in range(i + 1, len(sgs)):
             distance = sgs[i][3].dist(sgs[j][3])
             if _MIN <= distance <= _MAX:
-                a, b = sgs[i], sgs[j]
-                bonds.append(Disulfide(a[0], a[1], a[2], b[0], b[1], b[2], round(distance, 2)))
-                bonded.add(i)
-                bonded.add(j)
+                candidates.append((distance, i, j))
+    # A cysteine can participate in only one S-S bond.  Greedy shortest-first
+    # matching avoids reporting chemically impossible multi-bond assignments
+    # when several SG atoms happen to fall inside the distance window.
+    for distance, i, j in sorted(candidates):
+        if i in bonded or j in bonded:
+            continue
+        a, b = sgs[i], sgs[j]
+        bonds.append(Disulfide(a[0], a[1], a[2], b[0], b[1], b[2], round(distance, 2)))
+        bonded.add(i)
+        bonded.add(j)
     free = [{'chain': sgs[k][0], 'seqid': sgs[k][1], 'icode': sgs[k][2]}
             for k in range(len(sgs)) if k not in bonded]
     return bonds, free

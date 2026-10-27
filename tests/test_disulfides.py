@@ -47,6 +47,12 @@ def test_distance_window_edges():
     assert len(find_disulfides(_structure([(0, 0, 0), (2.6, 0, 0)]))[0]) == 0
 
 
+def test_cysteine_is_assigned_to_at_most_one_bridge():
+    bonds, free = find_disulfides(_structure([(0, 0, 0), (2.0, 0, 0), (4.0, 0, 0)]))
+    assert len(bonds) == 1
+    assert len(free) == 1
+
+
 def test_real_structure_trypsin_has_six_bridges():
     bonds, free = find_disulfides(gemmi.read_structure(str(DATA)))
     assert len(bonds) == 6
