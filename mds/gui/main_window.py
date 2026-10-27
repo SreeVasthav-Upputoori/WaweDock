@@ -263,6 +263,8 @@ class MainWindow(QMainWindow):
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.health_panel = ProteinHealthPanel(self.controller)
         self.dock_health = self._add_dock(self.health_panel, "Protein Health & Repair", "dockProteinHealth", right)
+        # Keep diagnostic controls readable when this dock is first opened.
+        self.dock_health.setMinimumWidth(360)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
         self.workspace.set_results(self.results_panel)
         self.dock_report = self._add_dock(self.report_panel, "Preparation Report", "dockReport", bottom)
