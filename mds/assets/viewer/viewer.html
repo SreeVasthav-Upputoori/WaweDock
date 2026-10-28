@@ -145,6 +145,43 @@ function applyReconstructed(o) {
       if (sameResidue && !context.has(index)) { context.add(index); pending.push(index); }
     }
   }
+  // Cartoon/ribbon geometry is generated per selected subset in 3Dmol. Add
+  // the actual peptide anchor residues on either side of a rebuilt residue so
+  // the highlighted segment joins the main ribbon instead of floating as an
+  // isolated strip. Only accept an anchor when the parsed C-N distance is a
+  // normal peptide bond; unresolved gaps are deliberately left disconnected.
+  const residueKeySafe = a => a._wdIdentity
+    ? residueKey(a)
+    : JSON.stringify([a.chain, a.resi, a.icode || '', a.resn]);
+  const residueAtoms = new Map();
+  atoms.forEach(a => {
+    const key = residueKeySafe(a);
+    if (!residueAtoms.has(key)) residueAtoms.set(key, []);
+    residueAtoms.get(key).push(a);
+  });
+  const backbone = key => {
+    const group = residueAtoms.get(key) || [];
+    const out = {};
+    group.forEach(a => { if (['N','CA','C'].includes(a.atom)) out[a.atom] = a; });
+    return out;
+  };
+  const distance3 = (a, b) => {
+    const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
+  };
+  const chosenResidues = new Set(Array.from(chosen).map(i => residueKeySafe(byIndex.get(i))).filter(Boolean));
+  chosenResidues.forEach(key => {
+    const base = (residueAtoms.get(key) || [])[0];
+    if (!base) return;
+    residueAtoms.forEach((group, candidateKey) => {
+      if (candidateKey === key || base.chain !== group[0].chain) return;
+      if (Math.abs(Number(group[0].resi) - Number(base.resi)) !== 1) return;
+      const left = Number(group[0].resi) < Number(base.resi) ? backbone(candidateKey) : backbone(key);
+      const right = Number(group[0].resi) < Number(base.resi) ? backbone(key) : backbone(candidateKey);
+      if (!left.C || !right.N || distance3(left.C, right.N) < 1.15 || distance3(left.C, right.N) > 1.55) return;
+      group.forEach(a => context.add(a.index));
+    });
+  });
   // A repair spanning most of the model cannot be shown as an all-atom overlay
   // without burying the representation underneath it; keep the reconstructed
   // atoms marked and drop the surrounding context in that case.

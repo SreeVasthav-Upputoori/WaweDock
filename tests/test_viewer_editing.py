@@ -756,5 +756,7 @@ def test_reconstructed_hydrogens_do_not_bury_the_representation(live_window):
     assert js(w.viewer, """(() => {
       const o = objects['rebuild-test'];
       highlightReconstructed('rebuild-test', [o.model.selectedAtoms({atom:'CA'})[0].index]);
-      return !!o.model.selectedAtoms({atom:'CA'})[0].style.cartoon && !o.model.selectedAtoms({atom:'CA'})[0].style.stick;
+      const chosen = o.model.selectedAtoms({atom:'CA'})[0];
+      const neighbor = o.model.selectedAtoms({resi:2,atom:'CA'})[0];
+      return !!chosen.style.cartoon && !chosen.style.stick && !!neighbor.style.cartoon;
     })()""")
