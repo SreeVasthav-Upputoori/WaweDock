@@ -148,12 +148,25 @@ function applyReconstructed(o) {
   // A repair spanning most of the model cannot be shown as an all-atom overlay
   // without burying the representation underneath it; keep the reconstructed
   // atoms marked and drop the surrounding context in that case.
+  const rep = o.rep;
+  const contextStyle = rep === 'cartoon' || rep === 'ribbon'
+    ? {cartoon:{style:rep === 'ribbon' ? 'trace' : 'rectangle', thickness:rep === 'ribbon' ? 0.4 : undefined, colorscheme:'Jmol'}}
+    : rep === 'ball-and-stick'
+      ? {stick:{radius:0.12,colorscheme:'Jmol'},sphere:{scale:0.25,colorscheme:'Jmol'}}
+      : rep === 'lines' ? {line:{colorscheme:'Jmol'}}
+      : rep === 'spheres' ? {sphere:{colorscheme:'Jmol'}}
+      : {stick:{radius:0.12,colorscheme:'Jmol'}};
+  const rebuiltStyle = rep === 'cartoon' || rep === 'ribbon'
+    ? {cartoon:{style:rep === 'ribbon' ? 'trace' : 'rectangle', thickness:rep === 'ribbon' ? 0.4 : undefined, color:'#00d6d6'}}
+    : rep === 'ball-and-stick'
+      ? {stick:{radius:0.12,color:'#00d6d6'},sphere:{scale:0.25,color:'#00d6d6'}}
+      : rep === 'lines' ? {line:{color:'#00d6d6'}}
+      : rep === 'spheres' ? {sphere:{color:'#00d6d6'}}
+      : {stick:{radius:0.12,color:'#00d6d6'}};
   if (context.size <= 150 || context.size <= atoms.length * 0.25) {
-    viewer.addStyle({model:o.model.getID(),predicate:a=>context.has(a.index) && !chosen.has(a.index) && componentVisible(o,a)},
-                     {stick:{radius:0.12,colorscheme:'Jmol'}});
+    viewer.addStyle({model:o.model.getID(),predicate:a=>context.has(a.index) && !chosen.has(a.index) && componentVisible(o,a)}, contextStyle);
   }
-  viewer.addStyle({model:o.model.getID(),predicate:a=>chosen.has(a.index) && componentVisible(o,a)},
-                   {stick:{radius:0.12,color:'#00d6d6'}});
+  viewer.addStyle({model:o.model.getID(),predicate:a=>chosen.has(a.index) && componentVisible(o,a)}, rebuiltStyle);
 }
 function copyObjectAppearance(fromName, toName) {
   if (!objects[fromName] || !objects[toName]) return;

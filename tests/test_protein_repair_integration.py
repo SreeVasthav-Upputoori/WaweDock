@@ -34,10 +34,12 @@ def test_repair_preview_accept_undo_redo_and_viewer_styles(window,damaged):
     assert js(w,f'!!objects[{preview}]')
     assert not js(w,f'!!objects[{preview}].editable')
     index=result.added[0]['atom_index']
-    assert js(w,f"objects[{preview}].model.selectedAtoms({{}})[{index}].style.stick.color")=='#00d6d6'
-    # Original anchors are exposed with real parsed bonds even in ribbon view.
-    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CB'}})[0].style.stick")
-    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CA'}})[0].style.stick")
+    assert js(w,f"objects[{preview}].model.selectedAtoms({{}})[{index}].style.cartoon.color")=='#00d6d6'
+    # Rebuilt residues follow the active ribbon representation without a
+    # distracting all-atom stick overlay.
+    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CB'}})[0].style.cartoon")
+    assert js(w,f"!!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CA'}})[0].style.cartoon")
+    assert js(w,f"!objects[{preview}].model.selectedAtoms({{resi:32,atom:'CA'}})[0].style.stick")
     assert '0 loop model(s) built' in panel.candidate_summary.text()
     assert 'require sequence evidence' in panel.repair_limits.text()
     from dataclasses import replace

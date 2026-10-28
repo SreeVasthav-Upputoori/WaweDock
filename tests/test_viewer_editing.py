@@ -751,9 +751,10 @@ def test_reconstructed_hydrogens_do_not_bury_the_representation(live_window):
       highlightReconstructed('rebuild-test', o.model.selectedAtoms({elem:'H'}).map(a => a.index));
       return o.model.selectedAtoms({}).every(a => !a.style.stick);
     })()""")
-    # A genuine reconstructed heavy atom is still highlighted.
+    # A genuine reconstructed heavy atom is highlighted in cartoon without
+    # creating a distracting chemical stick overlay.
     assert js(w.viewer, """(() => {
       const o = objects['rebuild-test'];
       highlightReconstructed('rebuild-test', [o.model.selectedAtoms({atom:'CA'})[0].index]);
-      return !!o.model.selectedAtoms({atom:'CA'})[0].style.stick;
+      return !!o.model.selectedAtoms({atom:'CA'})[0].style.cartoon && !o.model.selectedAtoms({atom:'CA'})[0].style.stick;
     })()""")
