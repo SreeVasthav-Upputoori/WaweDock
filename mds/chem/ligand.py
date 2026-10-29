@@ -119,7 +119,7 @@ def read_ligands(path: Path) -> list[LigandEntry]:
 
 def _from_smiles(smiles: str, name: str, source: str = "") -> LigandEntry:
     from rdkit import Chem
-    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.MolFromSmiles(smiles) if smiles.strip() else None
     return LigandEntry(name, mol, "" if mol else f"Invalid SMILES (valence or syntax error): {smiles}",
                        source)
 
@@ -133,8 +133,8 @@ def _read_csv(path: Path) -> list[LigandEntry]:
             raise PreparationError("CSV needs a 'smiles' column (header row required).")
         name_col = next((cols[k] for k in cols if k in ("name", "id", "title", "compound", "molecule")),
                         None)
-        return [_from_smiles(row[smi_col].strip(),
-                             (row[name_col].strip() if name_col else "") or f"{path.stem}_{i + 1}",
+        return [_from_smiles((row.get(smi_col) or "").strip(),
+                             ((row.get(name_col) or "").strip() if name_col else "") or f"{path.stem}_{i + 1}",
                              path.name)
                 for i, row in enumerate(reader)]
 
@@ -169,7 +169,7 @@ def compute_properties(mol: Chem.Mol) -> dict[str, float | int | str]:
 
 
 # ------------------------------------------------------------ preparation
-def _ionisation_notes(mol: Chem.Mol, report: Report) -> None:
+def _ionisation_notes(mol: Chem.Mol, report: Report, *, input_kept: bool = True) -> None:
     from rdkit import Chem
     found = []
     for label, smarts in _IONISABLE.items():
@@ -178,42 +178,39 @@ def _ionisation_notes(mol: Chem.Mol, report: Report) -> None:
         if n:
             found.append(f"{n}x {label}")
     if found:
+        state = "The input protonation state was kept. " if input_kept else "After heuristic ionisation. "
         report.warn("Ionisable groups detected: " + "; ".join(found) +
-                    ". The input protonation state was kept. Confirm it is appropriate for the "
-                    "target pH (re-run with 'simple pH 7.4 ionisation' if the input is neutral).")
+                    ". " + state + "Confirm the state is appropriate for the target pH.")
 
 
 def _apply_simple_ionisation(mol: Chem.Mol, report: Report) -> Chem.Mol:
     from rdkit import Chem
-    from rdkit.Chem import rdChemReactions
+    # Edit atoms in place on a copy: reaction products can reorder atoms and
+    # mishandle explicit hydrogen counts. Neutral-only matches make this idempotent.
     rules = [
-        ("carboxylic acid -> carboxylate", "[CX3:1](=[O:2])[OX2H1:3]>>[C:1](=[O:2])[O-:3]"),
+        ("carboxylic acid -> carboxylate", "[CX3](=O)[OX2H1+0]", 2, -1),
         ("aliphatic amine -> ammonium",
-         "[NX3;H2,H1,H0;!$(NC=[O,S,N]);!$(N-a);!$(N-[SX4]);!$(N-N);!$(N-O);!$(N-C=C):1]>>[N+:1]"),
-        ("amidine/guanidine -> amidinium", "[NX3:1][CX3:2]=[NX2;!$(N-a);H1,H0:3]>>[N:1][C:2]=[N+:3]"),
+         "[NX3+0;H2,H1,H0;!$(NC=[O,S,N]);!$(N-a);!$(N-[SX4]);!$(N#*);!$(N=*);!$(N-N);!$(N-O);!$(N-C=C)]([#6])", 0, 1),
+        ("amidine/guanidine -> amidinium",
+         "[NX3+0;!$(NC=O)][CX3]=[NX2+0;!$(N-a);H1,H0]", 2, 1),
     ]
     out = Chem.RemoveHs(mol)
-    for label, smirks in rules:
-        rxn = rdChemReactions.ReactionFromSmarts(smirks)
-        n = 0
-        while True:
-            products = rxn.RunReactants((out,))
-            if not products or n > 20:
-                break
-            new = products[0][0]
+    for label, smarts, target, charge in rules:
+        indices = sorted({match[target] for match in out.GetSubstructMatches(Chem.MolFromSmarts(smarts))})
+        for index in indices:
+            atom = out.GetAtomWithIdx(index)
+            hydrogens = atom.GetTotalNumHs()
+            atom.SetFormalCharge(charge)
+            atom.SetNumExplicitHs(hydrogens + charge)
+            atom.SetNoImplicit(True)
+        if indices:
             try:
-                Chem.SanitizeMol(new)
-            except Exception:  # noqa: BLE001
-                break
-            # Reaction rules can fire repeatedly on an already-charged atom; stop on no change.
-            if Chem.MolToSmiles(new) == Chem.MolToSmiles(out):
-                break
-            out, n = new, n + 1
-            if "->" in label and "amine" in label:
-                break  # amine rule changes one site per pass; avoid over-protonation
-        if n:
-            report.info(f"Simple ionisation rule applied ({label}) x{n}.")
-    report.warn("'Simple pH 7.4 ionisation' uses fixed textbook rules, not predicted pKa values; "
+                Chem.SanitizeMol(out)
+            except Exception as exc:
+                report.error(f"Simple ionisation failed ({label}): {exc}")
+                raise PreparationError("Simple ionisation produced an invalid structure", report) from exc
+            report.info(f"Simple ionisation rule applied ({label}) x{len(indices)}.")
+    report.warn("Heuristic ionisation uses fixed textbook rules, not predicted pKa values; "
                 "verify charged states for multi-ionisable or unusual molecules.")
     return out
 
@@ -227,18 +224,29 @@ def prepare_ligand(
     optimize: bool = True,
     keep_input_3d: bool = False,
 ) -> PreparedLigand:
-    """Validate ``entry`` and produce a Vina-ready PDBQT with a preparation report."""
+    """Validate and prepare a ligand. Keeping input 3D skips optimisation.
+
+    If no input 3D conformer exists, generate and optionally optimise conformers.
+    """
     from rdkit import Chem
     from rdkit.Chem import rdDistGeom
-    from meeko import MoleculePreparation, PDBQTWriterLegacy
 
     _configure_rdkit_logging()
     rep = Report()
+    if ionize not in {"none", "simple"}:
+        rep.error(f"Unknown ionisation mode: {ionize}")
+        raise PreparationError(rep.errors[-1], rep)
+    if isinstance(n_conformers, bool) or not isinstance(n_conformers, int) or n_conformers < 1:
+        rep.error("Conformer count must be a positive integer.")
+        raise PreparationError(rep.errors[-1], rep)
     if entry.mol is None:
         rep.error(entry.error or "Molecule could not be read.")
         raise PreparationError(f"{entry.name}: {entry.error}", rep)
 
     mol = Chem.Mol(entry.mol)
+    if mol.GetNumHeavyAtoms() == 0:
+        rep.error("Molecule contains no heavy atoms.")
+        raise PreparationError(f"{entry.name}: empty ligand", rep)
     try:
         Chem.SanitizeMol(mol)
     except Exception as exc:  # noqa: BLE001
@@ -269,10 +277,10 @@ def prepare_ligand(
     elif centres:
         rep.info(f"{len(centres)} defined stereocentre(s) preserved.")
 
-    _ionisation_notes(mol, rep)
     if ionize == "simple":
         mol = _apply_simple_ionisation(mol, rep)
         Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
+    _ionisation_notes(mol, rep, input_kept=ionize == "none")
 
     smiles = Chem.MolToSmiles(Chem.RemoveHs(mol))
     props = compute_properties(mol)
@@ -285,7 +293,7 @@ def prepare_ligand(
         params = rdDistGeom.ETKDGv3()
         params.randomSeed = seed
         params.useSmallRingTorsions = True
-        n_req = max(1, n_conformers)
+        n_req = n_conformers
         cids = list(rdDistGeom.EmbedMultipleConfs(mol_h, numConfs=n_req, params=params))
         if not cids:
             params.useRandomCoords = True
@@ -296,19 +304,30 @@ def prepare_ligand(
         rep.info(f"Generated {len(cids)} 3D conformer(s) with ETKDGv3 (seed {seed}).")
     else:
         rep.info("Input 3D coordinates were kept.")
-    if optimize:
+    if optimize and not (keep_input_3d and has_3d):
         _optimise(mol_h, rep)
+    elif optimize:
+        rep.info("Optimisation skipped to preserve input 3D coordinates.")
 
     # Meeko
-    prep = MoleculePreparation()
+    try:
+        from meeko import MoleculePreparation, PDBQTWriterLegacy
+        prep = MoleculePreparation()
+    except Exception as exc:
+        rep.error(f"Meeko could not initialise: {exc}")
+        raise PreparationError(f"{entry.name}: Meeko unavailable", rep) from exc
     pdbqts: list[str] = []
     n_rot = 0
     for conf in mol_h.GetConformers():
         single = _single_conformer(mol_h, conf.GetId())
-        setups = prep.prepare(single)
-        if not setups:
-            raise PreparationError(f"{entry.name}: Meeko returned no setup", rep)
-        text, ok, err = PDBQTWriterLegacy.write_string(setups[0])
+        try:
+            setups = prep.prepare(single)
+            if not setups:
+                raise ValueError("Meeko returned no setup")
+            text, ok, err = PDBQTWriterLegacy.write_string(setups[0])
+        except Exception as exc:
+            rep.error(f"Meeko preparation failed: {exc}")
+            raise PreparationError(f"{entry.name}: Meeko preparation failed", rep) from exc
         if not ok:
             rep.error(f"Meeko PDBQT writing failed: {err}")
             raise PreparationError(f"{entry.name}: {err}", rep)
@@ -334,11 +353,24 @@ def _single_conformer(mol: Chem.Mol, conf_id: int) -> Chem.Mol:
 def _optimise(mol_h: Chem.Mol, rep: Report) -> None:
     from rdkit.Chem import rdForceFieldHelpers
     if rdForceFieldHelpers.MMFFHasAllMoleculeParams(mol_h):
-        res = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
-        converged = sum(1 for c, _ in res if c == 0)
-        rep.info(f"MMFF94 optimisation: {converged}/{len(res)} conformer(s) converged.")
-        if converged < len(res):
-            rep.warn("Some conformers did not converge within 2000 MMFF iterations.")
-    else:
-        rdForceFieldHelpers.UFFOptimizeMoleculeConfs(mol_h, maxIters=2000, numThreads=0)
+        method = "MMFF94"
+        optimise = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs
+    elif rdForceFieldHelpers.UFFHasAllMoleculeParams(mol_h):
+        method = "UFF"
+        optimise = rdForceFieldHelpers.UFFOptimizeMoleculeConfs
         rep.warn("MMFF94 parameters unavailable for this molecule; UFF was used instead.")
+    else:
+        rep.error("Neither MMFF94 nor UFF has all parameters for this molecule.")
+        raise PreparationError("Cannot optimise ligand: missing force-field parameters", rep)
+    try:
+        res = optimise(mol_h, maxIters=2000, numThreads=0)
+    except Exception as exc:
+        rep.error(f"{method} optimisation failed: {exc}")
+        raise PreparationError("Ligand optimisation failed", rep) from exc
+    if len(res) != mol_h.GetNumConformers() or any(c < 0 for c, _ in res):
+        rep.error(f"{method} could not optimise all conformers.")
+        raise PreparationError("Ligand optimisation failed", rep)
+    converged = sum(1 for c, _ in res if c == 0)
+    rep.info(f"{method} optimisation: {converged}/{len(res)} conformer(s) converged.")
+    if converged < len(res):
+        rep.warn(f"Some conformers did not converge within 2000 {method} iterations.")

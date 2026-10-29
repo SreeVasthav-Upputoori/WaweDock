@@ -294,7 +294,7 @@ class DockingPanel(QScrollArea):
         self.ionize.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.ionize.setMinimumContentsLength(12)
         self.ionize.addItem("Keep input protonation", "none")
-        self.ionize.addItem("Simple pH 7.4 rules (acids, amines, amidines)", "simple")
+        self.ionize.addItem("Heuristic ionisation (acids, amines, amidines)", "simple")
         self.confs = QSpinBox()
         self.confs.setRange(1, 20)
         self.lig_seed = QSpinBox()
