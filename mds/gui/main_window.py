@@ -483,6 +483,7 @@ class MainWindow(QMainWindow):
         self.results_panel.pose_cleared.connect(self._clear_pose)
         self.results_panel.review_bar.settings_changed.connect(self._apply_pose_review)
         self.results_panel.review_bar.fit_requested.connect(self._fit_pose_review)
+        self.results_panel.pharmacophore_panel.display_requested.connect(self._show_pharmacophore)
         if self.viewer is not None:
             self.viewer.visibility_changed.connect(self._review_visibility_changed)
             self.viewer.pose_reference_requested.connect(self._use_as_reference)
@@ -751,6 +752,15 @@ class MainWindow(QMainWindow):
         if self.results_panel.review_bar.select_reference(name):
             self.status.showMessage(f"{name} locked as the pose-review reference.", 8000)
         self._apply_pose_review()
+
+    def _show_pharmacophore(self, pharmacophore, show: bool) -> None:
+        """Draw or clear the pharmacophore spheres; display only, never a project object."""
+        if self.viewer is None:
+            return
+        if show and pharmacophore is not None and pharmacophore.features:
+            self.viewer.show_pharmacophore(pharmacophore.features)
+        else:
+            self.viewer.clear_pharmacophore()
 
     def _refresh_review_references(self) -> None:
         self._reference_objects = [name for name in self._reference_objects if self.project_explorer.find(name) is not None]

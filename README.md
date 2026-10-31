@@ -219,8 +219,41 @@ UI colour scheme is unchanged.
    for the selected pose (H-bond, hydrophobic, pi-stacking, salt bridge, metal coordination, ...) and
    draws a 2D interaction diagram, entirely offline. **Needs Open Babel** (see below); unavailable
    otherwise, with a clear message rather than a silent failure or a faked result.
-8. **Analyse ▸ Similarity & Clustering** — Tanimoto similarity on Morgan fingerprints and Butina
+8. **Results ▸ Pharmacophore** — turns the selected pose's classified interactions into a reusable
+   3D query (see below), then scores every other pose by how much of it they reproduce.
+9. **Analyse ▸ Similarity & Clustering** — Tanimoto similarity on Morgan fingerprints and Butina
    clustering across the prepared ligands, with an optional reference compound to rank against.
+
+## Interaction pharmacophores
+
+In **Results & Analysis ▸ Pharmacophore**, select a pose and click **Derive from selected pose**.
+Each classified interaction becomes a ligand-side feature at the position of the ligand atoms
+responsible for it: an H-bond donor where the ligand donated, an aromatic ring at a stacked ring's
+centroid, a positive ionisable where the ligand's cation sat. Van der Waals contacts are excluded —
+ProLIF reports them across most of the interface, so they constrain nothing. Repeated contacts of
+one type on the same atoms merge into a single feature listing every partner residue.
+
+The feature types follow ProLIF's own ligand-side naming, so direction is preserved: `HBDonor`
+means the *ligand* donates and the feature is a donor requirement, and `MetalDonor` means the
+ligand *is* the metal, which needs a metal ion rather than a coordinating lone pair.
+
+**Score all poses** reports, for each pose, how many features it satisfies. A feature counts as
+satisfied when the pose offers compatible chemistry — from RDKit's own feature definitions, not
+mere proximity — within the feature's tolerance. Positions are compared feature to feature, so a
+ring requirement is matched against a candidate ring's centroid rather than its individual atoms.
+Tolerances default to 1.2–1.3 Å for directional polar features and 1.6–1.8 Å for bulk
+hydrophobic/aromatic contact; they are conventional values, not fitted ones.
+
+The intended use is reference-led: derive from a crystal ligand's pose, then ask which docked poses
+recover the known binding mode. **Show in 3D** draws each feature as a translucent sphere the size
+of its own tolerance, and **Export JSON** writes the features with their provenance and caveat.
+
+Recovery is a geometric score, never a predicted affinity or probability of activity. Nothing here
+is fitted, weighted or trained: unlike commercial pharmacophore modules there is no activity data
+to fit against, so a feature exists because an interaction was classified at those coordinates and
+matching is an explicit distance test. A derived pharmacophore inherits every limitation of the
+pose it came from. Deriving needs the same optional Open Babel backend as the Interactions tab;
+scoring poses afterwards does not.
 
 Docking scores are predictions from Vina's empirical scoring function — not measured affinities.
 Interaction types are geometric/chemical classifications of a predicted pose (ProLIF), not

@@ -163,6 +163,29 @@ class InteractionJob(Job):
         return protein, result
 
 
+class PharmacophoreMatchJob(Job):
+    """Score every supplied pose against one interaction pharmacophore.
+
+    Pure RDKit: unlike :class:`InteractionJob` this needs no Open Babel protein model, so it
+    runs wherever the chemistry backend loads at all.
+    """
+
+    def __init__(self, pharmacophore, poses: list[tuple[object, "Chem.Mol"]]) -> None:
+        self.pharmacophore, self.poses = pharmacophore, poses
+        self.name = f"Pharmacophore matching ({len(poses)} poses)"
+
+    def run(self, ctx: JobContext) -> list[tuple[object, object]]:
+        from mds.chem.pharmacophore import match
+
+        out = []
+        for index, (key, mol) in enumerate(self.poses):
+            ctx.check_cancelled()
+            ctx.progress(100 * index / max(1, len(self.poses)), f"Matching pose {index + 1}")
+            out.append((key, match(self.pharmacophore, mol)))
+        ctx.progress(100, "Pharmacophore matching complete")
+        return out
+
+
 class SimilarityJob(Job):
     """Tanimoto similarity + Butina clustering of the prepared ligands."""
 

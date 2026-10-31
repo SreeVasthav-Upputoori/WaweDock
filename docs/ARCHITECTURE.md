@@ -146,6 +146,7 @@ Delivered ahead of the original phase order at the user's request:
 | Contacts | distance-based candidates (conservative) | `mds/chem/contacts.py` |
 | Interactions (Phase 8) | ProLIF fingerprint (H-bond, hydrophobic, pi-stacking, salt bridge, ...) + 2D network diagram, fully offline | `mds/chem/interactions.py` |
 | Similarity & clustering (Phase 10) | Morgan/Tanimoto similarity, Butina clustering, compare-to-reference | `mds/chem/similarity.py` |
+| Interaction pharmacophores (Phase 8) | ligand-side features derived from a pose's ProLIF contacts; feature-to-feature matching of other poses (RDKit only — no Open Babel) | `mds/chem/pharmacophore.py` |
 | Projects | folder + `project.json`, run folders with `run.json` | `mds/project.py` |
 | Packaging | PyInstaller one-folder build | `wavedock.spec` |
 

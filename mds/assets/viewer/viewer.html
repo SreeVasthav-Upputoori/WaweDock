@@ -22,6 +22,7 @@ const viewer = $3Dmol.createViewer(document.getElementById("v"),
 const objects = {};          // name -> {model, kind, rep, color, visible, surf}
 let aroundSel = [];          // residue-selection styles in effect
 let boxShapes = [];
+let pharmShapes = [];
 let measureMode = "none", picks = [], measureShapes = [], labelsOn = false;
 const CARBON = ["#7fb7e6", "#e8b04a", "#7dd3a0", "#d98aa6", "#b4a3e0", "#e0d27a", "#8fd0d0", "#d99a7a"];
 let objectCount = 0;
@@ -413,6 +414,33 @@ function showBox(c, s, status = "ok") {
   viewer.render();
 }
 function clearBox() { boxShapes.forEach(b => viewer.removeShape(b)); boxShapes = []; viewer.render(); }
+
+// -------- interaction pharmacophore: one translucent sphere per feature, at its own tolerance
+const PHARM_COLORS = {
+  HBD: "#3366ff", HBA: "#e74c3c", Hydrophobic: "#f1c40f", Aromatic: "#9b59b6",
+  Cation: "#1abc9c", Anion: "#e67e22", Halogen: "#2ecc71",
+  MetalIon: "#95a5a6", MetalBinder: "#7f8c8d"
+};
+function showPharmacophore(features, labelled = true) {
+  clearPharmacophore();
+  features.forEach(f => {
+    const color = PHARM_COLORS[f.kind] || "#cccccc";
+    const center = {x: f.x, y: f.y, z: f.z};
+    // The sphere IS the tolerance: its radius is what a candidate feature has to reach.
+    pharmShapes.push(viewer.addSphere({center: center, radius: f.tolerance, color: color, opacity: 0.25}));
+    if (labelled) {
+      pharmShapes.push(viewer.addLabel(f.label, {position: center, fontSize: 10, fontColor: color,
+                                                 backgroundColor: "black", backgroundOpacity: 0.55,
+                                                 inFront: true}));
+    }
+  });
+  viewer.render();
+}
+function clearPharmacophore() {
+  pharmShapes.forEach(s => { try { viewer.removeShape(s); } catch (e) {} try { viewer.removeLabel(s); } catch (e) {} });
+  pharmShapes = [];
+  viewer.render();
+}
 
 // -------- measurements: click atoms to build distance/angle/dihedral
 function setMeasureMode(m) { measureMode = m; picks = []; emit("measure", m === "none" ? "Measurement off" : "Measure " + m + ": click " + need() + " atoms"); }

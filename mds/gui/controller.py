@@ -71,6 +71,7 @@ class Controller(QObject):
     interactions_started = Signal()
     interactions_ready = Signal(object, int, object)   # LigandOutcome, pose index, InteractionResult
     similarity_ready = Signal(object)            # SimilarityResult
+    pharmacophore_matched = Signal(list)         # [(key, MatchResult), ...]
     report = Signal(str, str)                   # title, text
     message = Signal(str)
     error = Signal(str, str)                    # title, text
@@ -574,6 +575,20 @@ class Controller(QObject):
         names = [p.name for p in self.prepared]
         job = SimilarityJob(mols, names, cutoff, reference, reference_smiles)
         self._submit(job, self.similarity_ready.emit)
+
+    def match_pharmacophore(self, pharmacophore, poses: list[tuple[object, object]]) -> None:
+        """Score poses against an interaction pharmacophore in the background."""
+        if not self._require_chemistry():
+            return
+        if not pharmacophore.features:
+            self.error.emit("Empty pharmacophore",
+                            "This pose produced no pharmacophore features to match against.")
+            return
+        if not poses:
+            self.error.emit("No poses", "There are no docked poses to score.")
+            return
+        from mds.jobs.science_jobs import PharmacophoreMatchJob
+        self._submit(PharmacophoreMatchJob(pharmacophore, poses), self.pharmacophore_matched.emit)
 
     # -------------------------------------------------------------- selection
     def set_selection(self, detail: dict, summary: str) -> None:

@@ -64,11 +64,26 @@ class ResidueInteractions:
     interactions: list[str] = field(default_factory=list)   # human-readable labels
 
 
+@dataclass(frozen=True)
+class InteractionContact:
+    """One classified interaction, with the ligand atoms ProLIF held responsible for it.
+
+    ``ligand_atoms`` indexes the pose molecule itself (ProLIF's ``parent_indices``), so a
+    caller can read those atoms' coordinates straight from the pose conformer.
+    """
+
+    residue: str                         # e.g. "ASP25:A"
+    interaction: str                     # ProLIF's own name, e.g. "HBDonor"
+    label: str                           # human-readable label
+    ligand_atoms: tuple[int, ...]        # atom indices into the pose molecule
+
+
 @dataclass
 class InteractionResult:
     residues: list[ResidueInteractions]
     network_html: str | None             # standalone HTML page for the 2D diagram, or None
     n_interactions: int
+    contacts: list[InteractionContact] = field(default_factory=list)
 
 
 def protein_to_rdkit(pdb_path: Path) -> Chem.Mol:
@@ -179,6 +194,7 @@ def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bo
         fp.run_from_iterable([lig_mol], prot_mol, progress=False, n_jobs=1)
 
     by_residue: dict[str, list[str]] = {}
+    contacts: list[InteractionContact] = []
     n = 0
     if fp.ifp:
         for data in fp.ifp[0].interactions():
@@ -187,6 +203,8 @@ def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bo
             by_residue.setdefault(key, [])
             if human not in by_residue[key]:
                 by_residue[key].append(human)
+            contacts.append(InteractionContact(key, data.interaction, human,
+                                               _ligand_atoms(data.metadata)))
             n += 1
 
     residues = [ResidueInteractions(res, sorted(types)) for res, types in sorted(by_residue.items())]
@@ -198,7 +216,17 @@ def compute_interactions(protein_rdkit: Chem.Mol, pose: Chem.Mol, *, diagram: bo
         except Exception:  # noqa: BLE001 — diagram is a bonus; never fail the analysis for it
             log.warning("Could not build the interaction diagram", exc_info=True)
             html = None
-    return InteractionResult(residues, html, n)
+    return InteractionResult(residues, html, n, contacts)
+
+
+def _ligand_atoms(metadata) -> tuple[int, ...]:
+    """The pose-molecule atom indices behind one interaction, or () when ProLIF omits them.
+
+    ``parent_indices`` maps back to the whole molecule; ``indices`` is residue-local and would be
+    wrong for a multi-residue ligand, so it is never used as a substitute.
+    """
+    indices = (metadata or {}).get("parent_indices", {}).get("ligand", ())
+    return tuple(int(i) for i in indices)
 
 
 def _format_residue(prot_res) -> str:

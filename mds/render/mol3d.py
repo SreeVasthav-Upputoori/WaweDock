@@ -168,6 +168,15 @@ class Mol3DViewer(QWebEngineView):
     def clear_box(self) -> None:
         self._call("clearBox")
 
+    def show_pharmacophore(self, features, labelled: bool = True) -> None:
+        """Draw one translucent sphere per pharmacophore feature, sized to its tolerance."""
+        self._call("showPharmacophore", [
+            {"kind": f.kind, "label": f.label, "tolerance": f.tolerance,
+             "x": f.x, "y": f.y, "z": f.z} for f in features], labelled)
+
+    def clear_pharmacophore(self) -> None:
+        self._call("clearPharmacophore")
+
     def set_measure_mode(self, mode: str) -> None:
         self._call("setMeasureMode", mode)
 

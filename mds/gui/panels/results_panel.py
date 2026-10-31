@@ -18,6 +18,7 @@ from mds.core.paths import assets_dir
 from mds.gui.controller import Controller
 from mds.gui.panels.score_chart import ScoreChart
 from mds.gui.panels.pose_review import PoseReviewBar
+from mds.gui.panels.pharmacophore_panel import PharmacophorePanel
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
 
@@ -192,11 +193,14 @@ class ResultsPanel(QWidget):
         cl.addWidget(caveat)
 
         self.interactions_panel = InteractionsPanel(controller)
+        self.pharmacophore_panel = PharmacophorePanel(controller)
+        self.pharmacophore_panel.pose_requested.connect(self.select_pose)
         self.analysis_tabs = QTabWidget()
         self.analysis_tabs.setUsesScrollButtons(True)
         self.analysis_tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.analysis_tabs.addTab(contact_box, "Contacts")
         self.analysis_tabs.addTab(self.interactions_panel, "Interactions")
+        self.analysis_tabs.addTab(self.pharmacophore_panel, "Pharmacophore")
         self.comparison = QTableWidget(0, len(COLUMNS))
         self.comparison.setHorizontalHeaderLabels(COLUMNS)
         self.comparison.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -255,6 +259,7 @@ class ResultsPanel(QWidget):
         self.table.setSortingEnabled(False)
         self.contacts.setRowCount(0)
         self.interactions_panel.clear_pose()
+        self.pharmacophore_panel.clear()
         self.comparison.setRowCount(0)
         self.table.setRowCount(0)
         self._rows = []
@@ -351,6 +356,7 @@ class ResultsPanel(QWidget):
             self.contact_status.setText("Select a pose to preview contacts.")
             self.contacts.setRowCount(0)
             self.interactions_panel.clear_pose()
+            self.pharmacophore_panel.clear_pose()
             self.pose_cleared.emit()
             return
         row = self.table.currentRow()
@@ -366,6 +372,7 @@ class ResultsPanel(QWidget):
         self._current_pose = (outcome, pose_i)
         self._show_contacts(outcome, pose_i)
         self.interactions_panel.set_pose(outcome, pose_i)
+        self.pharmacophore_panel.set_pose(outcome, pose_i)
         self.pose_selected.emit(outcome, pose_i)
 
     def _show_contacts(self, outcome:LigandOutcome,pose_i:int) -> None:
