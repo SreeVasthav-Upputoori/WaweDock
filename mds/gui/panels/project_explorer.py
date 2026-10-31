@@ -25,6 +25,7 @@ class ProjectExplorer(QWidget):
     color_requested = Signal(str, str)
     zoom_requested = Signal(str)
     remove_requested = Signal(str)
+    reference_requested = Signal(str)   # use this ligand as the pose-review reference
     objects_changed = Signal()                   # object was added or removed
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -143,8 +144,12 @@ class ProjectExplorer(QWidget):
 
     def _context_menu(self, pos: QPoint) -> None:
         index = self.view.indexAt(pos)
-        menu = QMenu(self)
         item = self.model.itemFromIndex(index) if index.isValid() else None
+        self.build_context_menu(item).exec(self.view.viewport().mapToGlobal(pos))
+
+    def build_context_menu(self, item: QStandardItem | None) -> QMenu:
+        """The menu for ``item`` (``None`` for empty space); separated so it can be inspected."""
+        menu = QMenu(self)
         obj = item.data(ObjectRole) if item is not None else None
         if obj is not None:
             menu.addAction("Zoom to", lambda: self.zoom_requested.emit(obj))
@@ -154,9 +159,15 @@ class ProjectExplorer(QWidget):
             col = menu.addMenu("Colour by")
             for c in COLOR_SCHEMES:
                 col.addAction(c.title(), lambda c=c: self.color_requested.emit(obj, c))
+            if (item.data(KindRole) or "") == "ligand":
+                menu.addSeparator()
+                action = menu.addAction("Use as pose reference",
+                                        lambda: self.reference_requested.emit(obj))
+                action.setToolTip("Keep this ligand visible while browsing docking poses. "
+                                  "Its coordinates are not changed.")
             menu.addSeparator()
             menu.addAction("Remove from workspace", lambda: self.remove_requested.emit(obj))
             menu.addSeparator()
         menu.addAction("Expand All", self.view.expandAll)
         menu.addAction("Collapse All", self.view.collapseAll)
-        menu.exec(self.view.viewport().mapToGlobal(pos))
+        return menu

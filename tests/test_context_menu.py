@@ -132,3 +132,23 @@ def test_ligand_color_palettes(viewer, kind, monkeypatch):
                             ("setLigandColor", "protein", "#cc33cc", False),
                             ("setLigandColor", "protein", "#123456", True),
                             ("setLigandColor", "protein", None, True)]
+
+
+def test_pose_reference_offered_for_ligands_only_when_viewer_supports_it(viewer, qapp):
+    class ReferenceViewer(Viewer):
+        pose_reference_requested = Signal(str)
+
+    assert find(build_context_menu(viewer, state(kind="ligand")), "Use as Pose Reference") is None
+    capable = ReferenceViewer()
+    requested = []
+    capable.pose_reference_requested.connect(requested.append)
+    try:
+        protein = build_context_menu(capable, state(kind="protein"))
+        assert find(protein, "Use as Pose Reference") is None
+        menu = build_context_menu(capable, state(name="STI (crystal)", kind="ligand"))
+        action = find(menu, "Use as Pose Reference")
+        assert action is not None
+        action.trigger()
+        assert requested == ["STI (crystal)"]
+    finally:
+        capable.close()

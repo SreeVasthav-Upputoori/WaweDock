@@ -201,21 +201,35 @@ def test_session_and_named_layout_restore_workspace(qapp, tmp_path):
         second.close()
 
 
+def _position(bar) -> str:
+    """The 'n / total' part of the readout, without the ligand/score detail."""
+    return bar.position.text().removeprefix('Pose ').split(' — ')[0]
+
+
 def test_review_navigation_follows_filtered_sorted_pose_rows(panel):
     bar=panel.review_bar
-    assert bar.position.text()=='1 / 3'
+    assert _position(bar)=='1 / 3'
     bar.next.click()
     assert panel._current_pose[0].name=='ligand A'
-    assert bar.position.text()=='2 / 3'
+    assert _position(bar)=='2 / 3'
     panel.search.setText('ligand A')
     panel.table.sortItems(2,Qt.SortOrder.DescendingOrder)
     panel.select_pose(panel.c.outcomes[0],1)
-    assert bar.position.text().endswith('/ 3')  # select_pose clears the search
+    assert _position(bar).endswith('/ 3')  # select_pose clears the search
     panel.search.setText('ligand A')
     panel.table.selectRow(next(r for r in range(panel.table.rowCount()) if not panel.table.isRowHidden(r)))
-    assert bar.position.text()=='1 / 2'
+    assert _position(bar)=='1 / 2'
     bar.next.click()
-    assert bar.position.text()=='2 / 2'
+    assert _position(bar)=='2 / 2'
     assert not bar.next.isEnabled()
     bar.previous.click()
-    assert bar.position.text()=='1 / 2'
+    assert _position(bar)=='1 / 2'
+
+
+def test_review_readout_names_the_selected_pose(panel):
+    bar=panel.review_bar
+    outcome,pose_index=panel._current_pose
+    pose=outcome.poses[pose_index]
+    assert bar.position.text()==f'Pose 1 / 3 — {outcome.name} #{pose.rank} · {pose.score:.2f} kcal/mol'
+    panel.table.clearSelection()
+    assert bar.position.text()=='Pose 0 / 3'      # no detail without a selected pose

@@ -49,6 +49,7 @@ class Mol3DViewer(QWebEngineView):
     health_inspect_requested = Signal()
     health_repair_requested = Signal()
     visibility_changed = Signal(str, bool)
+    pose_reference_requested = Signal(str)      # ligand object to lock as pose reference
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

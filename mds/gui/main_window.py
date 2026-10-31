@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         ex.color_requested.connect(lambda n, s: self._viewer_call("set_color_scheme", n, s))
         ex.zoom_requested.connect(lambda n: self._viewer_call("zoom_to", n))
         ex.remove_requested.connect(self._remove_object)
+        ex.reference_requested.connect(self._use_as_reference)
         self.job_runner.active_count_changed.connect(self.status.set_active_jobs)
         self.job_runner.job_progress.connect(lambda _i, pct, _m: self.status.set_progress(pct))
         c.message.connect(lambda m: self.status.showMessage(m, 8000))
@@ -484,6 +485,7 @@ class MainWindow(QMainWindow):
         self.results_panel.review_bar.fit_requested.connect(self._fit_pose_review)
         if self.viewer is not None:
             self.viewer.visibility_changed.connect(self._review_visibility_changed)
+            self.viewer.pose_reference_requested.connect(self._use_as_reference)
             self.viewer.atom_info.connect(self.status.set_selection)
             self.viewer.measurement.connect(lambda m: self.status.showMessage(m, 15000))
             self.viewer.selection_changed.connect(c.set_selection)
@@ -733,6 +735,22 @@ class MainWindow(QMainWindow):
                 "Poses": len(o.poses)}, visible=False, kind="result")
         if self._focus_state is None:
             self.workspace.select(2)
+
+    def _use_as_reference(self, name: str) -> None:
+        """Offer any ligand object as the pose-review reference, then lock it."""
+        if self._pose_review is not None and name == self._pose_review.pose_name:
+            self.status.showMessage("The current docking pose cannot be its own reference.", 8000)
+            return
+        if self.project_explorer.find(name) is None:
+            return
+        if name not in self._reference_objects:
+            self._reference_objects.append(name)
+        self._refresh_review_references()
+        if self.workspace.tabs.currentIndex() != 2:
+            self.workspace.select(2)
+        if self.results_panel.review_bar.select_reference(name):
+            self.status.showMessage(f"{name} locked as the pose-review reference.", 8000)
+        self._apply_pose_review()
 
     def _refresh_review_references(self) -> None:
         self._reference_objects = [name for name in self._reference_objects if self.project_explorer.find(name) is not None]

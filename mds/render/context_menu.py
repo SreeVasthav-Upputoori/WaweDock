@@ -78,6 +78,11 @@ def build_context_menu(viewer, state: dict) -> QMenu:
         else:
             colors.addSeparator()
             ligand_colors(colors)
+            if hasattr(viewer, "pose_reference_requested"):
+                action = menu.addAction("Use as Pose Reference",
+                                        lambda: viewer.pose_reference_requested.emit(name))
+                action.setToolTip("Keep this ligand visible while browsing docking poses. "
+                                  "Its coordinates are not changed.")
         operations = menu.addMenu("Molecular Operations")
         for label, value in (("Hydrogens", "hydrogens"), ("Waters", "waters"), ("Ligands", "ligands")):
             choice(operations, "Show " + label, state.get("components", {}).get(value, True),

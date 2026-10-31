@@ -91,13 +91,23 @@ is carried over as well.
 
 ## Pose-by-pose review
 
-In **Results & Analysis**, choose the crystal reference, check **Lock reference**,
-and check **Hide protein**. Use **Fit view** once, then **Previous / Next** or the
-pose table to browse. The reference keeps its coordinates and stays visible;
-protein objects are hidden without deletion and return to their prior visibility
-when unchecked. **Keep camera** is on by default and enforced while the reference
-is locked. Docked pose colours and representation carry across pose changes.
+In **Results & Analysis**, the **Pose review** group holds these controls. Choose a
+reference ligand, check **Lock reference**, and check **Hide protein**. Use **Fit
+view** once, then **Previous / Next** (or **Alt+Left / Alt+Right**, or the pose
+table) to browse. The position readout names the pose you are looking at —
+`Pose 3 / 6 — caffeine #3 · -5.08 kcal/mol`. The reference keeps its coordinates and
+stays visible; protein objects are hidden without deletion and return to their prior
+visibility when unchecked. **Keep camera** is on by default and enforced while the
+reference is locked. Docked pose colours and representation carry across pose changes.
 Navigation follows the current table sort/filter. Fit View never realigns atoms.
+
+Receptor preparation offers each extracted co-crystal ligand as a reference
+automatically. Any other ligand can be added on demand: right-click it in Project
+Explorer and choose **Use as pose reference**, which adds it to the dropdown, locks
+it, and switches to Results & Analysis. Its coordinates are not changed, and the
+current docking pose cannot be used as its own reference. Until a reference exists,
+the group says so rather than showing a dead dropdown. A reference whose object is
+removed from the workspace drops out of the list.
 
 The [one-job pose-review audit](docs/audits/2026-10-22-pose-review.md) records what
 was exercised and the remaining RDKit-related integration-test limitation.

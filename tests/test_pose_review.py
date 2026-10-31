@@ -89,3 +89,61 @@ def test_live_pose_replacement_keeps_camera_and_custom_appearance(qapp):
         assert js("objects.ref.model.selectedAtoms({})[0].x")==0
     finally:
         viewer.close()
+
+
+def test_review_bar_hint_and_reference_selection(qapp):
+    from mds.gui.panels.pose_review import NO_REFERENCE_HINT
+    bar=PoseReviewBar(); bar.show()
+    try:
+        assert bar.hint.isVisible() and bar.hint.text()==NO_REFERENCE_HINT
+        assert not bar.reference.isEnabled() and not bar.reference_label.isEnabled()
+        assert not bar.select_reference('STI (crystal)')
+        bar.set_references(['STI (crystal)','my ligand'])
+        assert not bar.hint.isVisible() and bar.reference_label.isEnabled()
+        assert bar.select_reference('my ligand')
+        assert bar.reference.currentText()=='my ligand' and bar.lock_reference.isChecked()
+        assert not bar.keep_camera.isEnabled()
+    finally:
+        bar.close()
+
+
+def test_review_bar_position_detail_and_shortcut_gating(qapp):
+    bar=PoseReviewBar(); steps=[]; bar.step_requested.connect(steps.append)
+    try:
+        bar.set_position(2,6,'caffeine #3 · -5.08 kcal/mol')
+        assert bar.position.text()=='Pose 3 / 6 — caffeine #3 · -5.08 kcal/mol'
+        bar.set_position(-1,6,'ignored')
+        assert bar.position.text()=='Pose 0 / 6'
+        bar.set_position(1,6,'caffeine #2 · -5.12 kcal/mol')
+        bar._step_shortcut(bar.next)          # hidden bar: keys stay inert
+        assert steps==[]
+        bar.show()
+        bar._step_shortcut(bar.next)
+        bar.set_position(5,6)
+        bar._step_shortcut(bar.next)          # disabled at the last pose
+        assert steps==[1]
+    finally:
+        bar.close()
+
+
+def test_explorer_offers_pose_reference_for_ligands_only(qapp):
+    from mds.gui.panels.project_explorer import ProjectExplorer
+    ex=ProjectExplorer()
+    try:
+        ex.upsert_object('Ligands','STI (crystal)',{},kind='ligand')
+        ex.upsert_object('Proteins','1XBB',{},kind='protein')
+        requested=[]; ex.reference_requested.connect(requested.append)
+
+        def reference_actions(name):
+            menu=ex.build_context_menu(ex.find(name))
+            return [a for a in menu.actions() if a.text()=='Use as pose reference']
+
+        assert not reference_actions('1XBB')
+        assert not [a for a in ex.build_context_menu(None).actions()
+                    if a.text()=='Use as pose reference']
+        actions=reference_actions('STI (crystal)')
+        assert len(actions)==1
+        actions[0].trigger()
+        assert requested==['STI (crystal)']
+    finally:
+        ex.close()

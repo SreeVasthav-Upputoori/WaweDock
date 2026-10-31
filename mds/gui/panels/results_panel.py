@@ -356,9 +356,11 @@ class ResultsPanel(QWidget):
         row = self.table.currentRow()
         row = row if row in rows else rows[0]
         visible_rows = [r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)]
-        self.review_bar.set_position(visible_rows.index(row), len(visible_rows))
         idx = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         outcome, pose_i = self._rows[idx]
+        pose = outcome.poses[pose_i]
+        self.review_bar.set_position(visible_rows.index(row), len(visible_rows),
+                                     f"{outcome.name} #{pose.rank} · {pose.score:.2f} kcal/mol")
         if self._current_pose is not None and self._current_pose[0] is outcome and self._current_pose[1] == pose_i:
             return
         self._current_pose = (outcome, pose_i)
