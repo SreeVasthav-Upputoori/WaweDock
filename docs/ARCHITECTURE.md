@@ -142,11 +142,12 @@ Delivered ahead of the original phase order at the user's request:
 | Ligand prep | RDKit (ETKDGv3, MMFF94) → Meeko | `mds/chem/ligand.py` |
 | Docking box | ligand / residues / blind / manual + validation | `mds/chem/box.py` |
 | Vina | `vina.exe` subprocess adapter, cancellable | `mds/engines/vina.py` |
-| Poses & RMSD | Meeko → RDKit, symmetry-aware RMSD | `mds/chem/poses.py` |
+| Poses & RMSD | Meeko → RDKit, symmetry-aware RMSD, MCS RMSD across different ligands (never realigned) | `mds/chem/poses.py` |
 | Contacts | distance-based candidates (conservative) | `mds/chem/contacts.py` |
 | Interactions (Phase 8) | ProLIF fingerprint (H-bond, hydrophobic, pi-stacking, salt bridge, ...) + 2D network diagram, fully offline | `mds/chem/interactions.py` |
 | Similarity & clustering (Phase 10) | Morgan/Tanimoto similarity, Butina clustering, compare-to-reference | `mds/chem/similarity.py` |
 | Interaction pharmacophores (Phase 8) | ligand-side features derived from a pose's ProLIF contacts; feature-to-feature matching of other poses (RDKit only — no Open Babel) | `mds/chem/pharmacophore.py` |
+| Pose consistency (Phase 8) | one reference pose vs. every docked pose: RMSD/MCS RMSD, interaction-set Tanimoto with kept/lost/gained contacts, feature recovery, orientation, volume overlap; weighted consensus + verdict (documented convention, not a fitted model) | `mds/chem/pose_consistency.py` |
 | Projects | folder + `project.json`, run folders with `run.json` | `mds/project.py` |
 | Packaging | PyInstaller one-folder build | `wavedock.spec` |
 

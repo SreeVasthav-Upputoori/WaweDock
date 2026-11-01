@@ -188,3 +188,51 @@ def write_poses_sdf(path: Path, mols: list[Chem.Mol], properties: list[dict]) ->
     finally:
         writer.close()
 
+
+def mcs_rmsd(probe: Chem.Mol, reference: Chem.Mol, *, timeout: int = 10,
+             max_matches: int = 200) -> tuple[float | None, int, float]:
+    """In-place RMSD over the maximum common substructure of two *different* ligands.
+
+    Returns ``(rmsd, mcs_heavy_atoms, fraction_of_reference)``. Unlike
+    :func:`symmetric_rmsd` this does not require identical chemistry, so a docked analogue can
+    be compared with a reference ligand on the scaffold they share. Like it, the molecules are
+    never re-superposed: the RMSD is measured between the coordinates as docked, which is what
+    a binding-mode comparison needs. ``rmsd`` is None when no common substructure of at least
+    three atoms is found.
+    """
+    from rdkit import Chem
+    from rdkit.Chem import rdFMCS
+
+    p = Chem.RemoveHs(probe, sanitize=False)
+    r = Chem.RemoveHs(reference, sanitize=False)
+    # Skipping sanitisation keeps odd docked chemistry readable, but leaves ring info unset,
+    # which the ring-aware MCS query then trips over. FastFindRings fills it in cheaply.
+    for m in (p, r):
+        Chem.FastFindRings(m)
+    result = rdFMCS.FindMCS([r, p], atomCompare=rdFMCS.AtomCompare.CompareAny,
+                            bondCompare=rdFMCS.BondCompare.CompareAny,
+                            ringMatchesRingOnly=True, completeRingsOnly=True, timeout=timeout)
+    if result.canceled or result.numAtoms < 3:
+        # Fall back to element-matched atoms without the ring constraints, which is cheaper.
+        result = rdFMCS.FindMCS([r, p], atomCompare=rdFMCS.AtomCompare.CompareElements,
+                                bondCompare=rdFMCS.BondCompare.CompareAny, timeout=timeout)
+    fraction = round(result.numAtoms / max(r.GetNumAtoms(), 1), 3)
+    if result.numAtoms < 3:
+        return None, int(result.numAtoms), fraction
+
+    query = getattr(result, "queryMol", None) or Chem.MolFromSmarts(result.smartsString)
+    if query is None:
+        return None, int(result.numAtoms), fraction
+    ref_match = r.GetSubstructMatch(query)
+    probe_matches = p.GetSubstructMatches(query, uniquify=False, maxMatches=max_matches)
+    if not ref_match or not probe_matches:
+        return None, int(result.numAtoms), fraction
+
+    r_xyz = np.array(r.GetConformer().GetPositions())[list(ref_match)]
+    p_all = np.array(p.GetConformer().GetPositions())
+    # Every embedding of the MCS in the probe is tried, so a symmetric scaffold is not
+    # penalised for an arbitrary atom labelling; the reference needs only one embedding
+    # because the probe's enumeration already spans every relative mapping.
+    best = min(float(np.sqrt(np.mean(np.sum((p_all[list(m)] - r_xyz) ** 2, axis=1))))
+               for m in probe_matches)
+    return round(best, 3), int(result.numAtoms), fraction

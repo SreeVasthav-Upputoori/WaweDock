@@ -221,7 +221,11 @@ UI colour scheme is unchanged.
    otherwise, with a clear message rather than a silent failure or a faked result.
 8. **Results ▸ Pharmacophore** — turns the selected pose's classified interactions into a reusable
    3D query (see below), then scores every other pose by how much of it they reproduce.
-9. **Analyse ▸ Similarity & Clustering** — Tanimoto similarity on Morgan fingerprints and Butina
+9. **Results ▸ Pose Consistency** — picks one trusted reference pose and reports how much of that
+   binding mode every other pose reproduces: RMSD (or MCS RMSD across different ligands), kept/lost
+   /gained interactions, pharmacophore feature recovery, centroid shift, long-axis angle and volume
+   overlap, with a verdict per pose.
+10. **Analyse ▸ Similarity & Clustering** — Tanimoto similarity on Morgan fingerprints and Butina
    clustering across the prepared ligands, with an optional reference compound to rank against.
 
 ## Interaction pharmacophores
@@ -258,6 +262,44 @@ scoring poses afterwards does not.
 Docking scores are predictions from Vina's empirical scoring function — not measured affinities.
 Interaction types are geometric/chemical classifications of a predicted pose (ProLIF), not
 experimentally verified interactions.
+
+## Pose consistency
+
+A docking score says a pose is favourable; it does not say the pose *binds the way the reference
+does*. **Results & Analysis ▸ Pose Consistency** answers that second question. Choose the reference
+— the co-crystal ligand, or select any docked pose and press **Use selected pose** — then
+**Compare all poses**. Each pose is measured along six independent axes:
+
+| Axis | What it measures |
+|---|---|
+| **RMSD (Å)** | Symmetry-aware heavy-atom RMSD, measured where the poses sit. Blank when the ligand differs from the reference. |
+| **MCS RMSD (Å)** | RMSD over the largest substructure the pose and reference share, so an analogue can be compared on the common scaffold. |
+| **Interaction Tc** | Tanimoto over the `(residue, interaction type)` pairs ProLIF classifies, with the reference contacts kept, lost and newly gained listed per pose. |
+| **Features** | How many of the reference's own pharmacophore features the pose reproduces within tolerance, matched only within their own kind. |
+| **Centroid Δ / Axis °** | How far the pose sits from the reference and how its long axis differs. |
+| **Volume (%) / USR** | Van der Waals volume overlap where the poses actually sit, and USR shape similarity of the conformers. |
+
+Nothing is realigned. Every geometric number is measured between the coordinates as docked, because
+a pose that matches only *after* being moved has not reproduced the binding mode.
+
+Three details are deliberate. **USR is reported but kept out of the consensus**: it is built from
+internal distances only, so it compares conformers and says nothing about placement — the volume
+overlap carries the shape term instead. **The long-axis angle is blank for an isotropic ligand**,
+where the two leading eigenvalues are nearly equal, the axis they span is arbitrary and any angle
+from it would be noise. **A flip is reported separately from the score**, because a pose threaded
+end-to-end backwards can keep most of the reference's contacts and still score respectably; the
+`Flipped` verdict takes precedence so that it cannot hide behind a good consensus.
+
+The consensus column and the verdicts (`Conserved`, `Partially conserved`, `Different`, `Flipped`,
+`Outlier`) come from the weights and cut-offs shown in the column tooltips. **They are conventions
+for ordering a long pose list, not a fitted or validated model** — no activity data was used to
+choose them, and a different reasonable choice would move borderline poses between verdicts. The
+individual columns are what should be quoted. Selecting a row shows that pose in 3D and lists its
+kept, lost and gained contacts; **Export CSV** writes every axis with those lists spelled out.
+
+The interaction axis needs the optional Open Babel backend and a prepared receptor; without either
+it reports *why* it is unavailable against every pose and the consensus is taken over the remaining
+axes, rather than silently scoring zero. The shape and feature axes can be switched off for speed.
 
 ## Interactive structure editing
 

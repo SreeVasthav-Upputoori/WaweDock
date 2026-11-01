@@ -80,7 +80,7 @@ _SATISFIED_BY = {
     "Cation": ("PosIonizable",), "Anion": ("NegIonizable",),
     "Hydrophobic": ("Hydrophobe", "LumpedHydrophobe"),
     "Aromatic": ("Aromatic",),
-    "MetalBinder": ("Acceptor",),   # plus any N/O/S by element, see _feature_points
+    "MetalBinder": ("Acceptor",),   # plus any N/O/S by element, see feature_points
     # Matched by element instead of an RDKit feature family: its definitions have no
     # halogen-bond family, and no family marks an atom as being a metal.
     "Halogen": (), "MetalIon": (),
@@ -217,7 +217,7 @@ def match(pharmacophore: Pharmacophore, pose: Chem.Mol) -> MatchResult:
     if not pose.GetNumConformers():
         raise ValueError("The pose has no conformer, so it cannot be matched")
 
-    points = _feature_points(pose)
+    points = feature_points(pose)
     matches = []
     for feature in pharmacophore.features:
         distances = [math.dist(feature.center, point) for point in points.get(feature.kind, ())]
@@ -229,7 +229,7 @@ def match(pharmacophore: Pharmacophore, pose: Chem.Mol) -> MatchResult:
 Point = tuple[float, float, float]
 
 
-def _feature_points(mol: Chem.Mol) -> dict[str, tuple[Point, ...]]:
+def feature_points(mol: Chem.Mol) -> dict[str, tuple[Point, ...]]:
     """Positions in ``mol`` that can satisfy each pharmacophore feature type.
 
     RDKit places a multi-atom feature (an aromatic ring, a lumped hydrophobe) at its centroid,

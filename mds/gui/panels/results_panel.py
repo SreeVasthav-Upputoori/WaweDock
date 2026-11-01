@@ -19,6 +19,7 @@ from mds.gui.controller import Controller
 from mds.gui.panels.score_chart import ScoreChart
 from mds.gui.panels.pose_review import PoseReviewBar
 from mds.gui.panels.pharmacophore_panel import PharmacophorePanel
+from mds.gui.panels.consistency_panel import ConsistencyPanel
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
 
@@ -201,6 +202,9 @@ class ResultsPanel(QWidget):
         self.analysis_tabs.addTab(contact_box, "Contacts")
         self.analysis_tabs.addTab(self.interactions_panel, "Interactions")
         self.analysis_tabs.addTab(self.pharmacophore_panel, "Pharmacophore")
+        self.consistency_panel = ConsistencyPanel(controller)
+        self.consistency_panel.pose_requested.connect(self.select_pose)
+        self.analysis_tabs.addTab(self.consistency_panel, "Pose Consistency")
         self.comparison = QTableWidget(0, len(COLUMNS))
         self.comparison.setHorizontalHeaderLabels(COLUMNS)
         self.comparison.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -260,6 +264,7 @@ class ResultsPanel(QWidget):
         self.contacts.setRowCount(0)
         self.interactions_panel.clear_pose()
         self.pharmacophore_panel.clear()
+        self.consistency_panel.clear()
         self.comparison.setRowCount(0)
         self.table.setRowCount(0)
         self._rows = []
@@ -357,6 +362,7 @@ class ResultsPanel(QWidget):
             self.contacts.setRowCount(0)
             self.interactions_panel.clear_pose()
             self.pharmacophore_panel.clear_pose()
+            self.consistency_panel.clear_pose()
             self.pose_cleared.emit()
             return
         row = self.table.currentRow()
@@ -373,6 +379,7 @@ class ResultsPanel(QWidget):
         self._show_contacts(outcome, pose_i)
         self.interactions_panel.set_pose(outcome, pose_i)
         self.pharmacophore_panel.set_pose(outcome, pose_i)
+        self.consistency_panel.set_pose(outcome, pose_i)
         self.pose_selected.emit(outcome, pose_i)
 
     def _show_contacts(self, outcome:LigandOutcome,pose_i:int) -> None:

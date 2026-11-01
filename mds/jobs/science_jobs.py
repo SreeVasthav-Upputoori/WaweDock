@@ -204,3 +204,65 @@ class SimilarityJob(Job):
             result = cluster(self.mols, self.names, cutoff=self.cutoff)
         ctx.progress(100, "Clustering complete")
         return result
+
+
+class PoseConsistencyJob(Job):
+    """Compare every supplied pose with one reference pose along the six consistency axes.
+
+    The interaction axis needs the receptor rebuilt as an RDKit molecule (Open Babel bond
+    perception) and one ProLIF run per pose, so the protein model is built once here and
+    handed back for the caller to cache, exactly as :class:`InteractionJob` does. When that
+    backend is missing the job still runs and reports the remaining axes, with the reason
+    recorded against every pose rather than silently omitted.
+    """
+
+    def __init__(self, reference, reference_label: str,
+                 poses: list[tuple[object, str, "Chem.Mol"]], options, *,
+                 receptor_pdb: Path | None = None, cached_protein=None) -> None:
+        self.reference, self.reference_label = reference, reference_label
+        self.poses, self.options = poses, options
+        self.receptor_pdb = Path(receptor_pdb) if receptor_pdb else None
+        self.cached_protein = cached_protein
+        self.name = f"Pose consistency ({len(poses)} poses vs {reference_label})"
+
+    def run(self, ctx: JobContext) -> tuple[object, list[tuple[object, object]]]:
+        from dataclasses import replace
+
+        from mds.chem.pose_consistency import compare
+
+        options, protein, reference_contacts = self.options, self.cached_protein, None
+        disabled = ""
+        if options.interactions:
+            try:
+                if protein is None:
+                    if self.receptor_pdb is None:
+                        raise PreparationError("No prepared receptor, so interactions could not "
+                                               "be classified.")
+                    ctx.progress(5, "Building protein model")
+                    protein = protein_to_rdkit(self.receptor_pdb)
+                ctx.progress(12, f"Classifying interactions for {self.reference_label}")
+                reference_contacts = compute_interactions(protein, self.reference,
+                                                          diagram=False).contacts
+            except PreparationError as exc:
+                # Reported against every pose instead of being dropped, so the table can never
+                # look as though the interaction axis simply scored zero.
+                disabled = f"Interaction axis unavailable: {exc}"
+                options = replace(options, interactions=False)
+                reference_contacts = None
+
+        results: list[tuple[object, object]] = []
+        for index, (key, label, mol) in enumerate(self.poses):
+            ctx.check_cancelled()
+            ctx.progress(15 + 85 * index / max(1, len(self.poses)),
+                         f"{label} ({index + 1}/{len(self.poses)})")
+            pose_contacts = None
+            if options.interactions and protein is not None:
+                pose_contacts = compute_interactions(protein, mol, diagram=False).contacts
+            outcome = compare(self.reference, mol, label, options=options,
+                              reference_contacts=reference_contacts,
+                              pose_contacts=pose_contacts)
+            if disabled:
+                outcome = replace(outcome, notes=(disabled, *outcome.notes))
+            results.append((key, outcome))
+        ctx.progress(100, "Pose consistency complete")
+        return protein, results

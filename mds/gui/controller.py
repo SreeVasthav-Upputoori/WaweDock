@@ -23,7 +23,8 @@ from mds.chem.workflow import DockingParameters, LigandOutcome, results_rows, wr
 from mds.jobs.latest import LatestJobQueue
 from mds.jobs import Job, JobRunner
 from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
-                                   PrepareLigandsJob, PrepareReceptorJob, InspectReceptorJob, ContactsJob, SimilarityJob)
+                                   PoseConsistencyJob, PrepareLigandsJob, PrepareReceptorJob,
+                                   InspectReceptorJob, ContactsJob, SimilarityJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -72,6 +73,8 @@ class Controller(QObject):
     interactions_ready = Signal(object, int, object)   # LigandOutcome, pose index, InteractionResult
     similarity_ready = Signal(object)            # SimilarityResult
     pharmacophore_matched = Signal(list)         # [(key, MatchResult), ...]
+    consistency_busy = Signal(bool)
+    consistency_ready = Signal(str, list)        # reference label, [(key, PoseConsistency), ...]
     report = Signal(str, str)                   # title, text
     message = Signal(str)
     error = Signal(str, str)                    # title, text
@@ -101,6 +104,7 @@ class Controller(QObject):
         self._docking_job: int | None = None
         self._receptor_check_job: int | None = None
         self._interaction_job: int | None = None
+        self._consistency_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
         self.selection: dict[str, list[dict]] = {}    # object_name -> [{"chain", "resi"}]
         self._repair_revisions = {}
@@ -170,6 +174,9 @@ class Controller(QObject):
         last = tb.strip().splitlines()[-1] if tb.strip() else "unknown error"
         if job_id == self._docking_job:
             self._docking_job = None
+        if job_id == self._consistency_job:
+            self._consistency_job = None
+            self.consistency_busy.emit(False)
         if job_id == self._interaction_job:
             self._interaction_job = None
         self.error.emit(self.runner.name(job_id) + " failed", last)
@@ -187,6 +194,9 @@ class Controller(QObject):
             self.message.emit("Docking cancelled")
         if job_id == self._interaction_job:
             self._interaction_job = None
+        if job_id == self._consistency_job:
+            self._consistency_job = None
+            self.consistency_busy.emit(False)
 
     # --------------------------------------------------------------- project
     def ensure_project(self) -> Project:
@@ -589,6 +599,46 @@ class Controller(QObject):
             return
         from mds.jobs.science_jobs import PharmacophoreMatchJob
         self._submit(PharmacophoreMatchJob(pharmacophore, poses), self.pharmacophore_matched.emit)
+
+    def analyze_pose_consistency(self, reference, reference_label: str,
+                                 poses: list[tuple[object, str, object]], options) -> None:
+        """Compare poses with one reference pose in the background.
+
+        The reference may be the co-crystal ligand or any docked pose; the caller decides. The
+        receptor's RDKit model is shared with the interaction analysis, so running both costs
+        the Open Babel rebuild only once.
+        """
+        if not self._require_chemistry():
+            return
+        if reference is None:
+            self.error.emit("No reference pose",
+                            "Choose a reference: the co-crystal ligand, or a docked pose you trust.")
+            return
+        if not poses:
+            self.error.emit("No poses", "There are no docked poses to compare.")
+            return
+        if self._consistency_job is not None:
+            return          # a previous comparison is still running
+        cached, receptor_pdb = None, None
+        if self.receptor is not None:
+            receptor_pdb = self.receptor.prepared_pdb
+            if self._cached_protein_rdkit is not None and self._cached_protein_rdkit[0] == receptor_pdb:
+                cached = self._cached_protein_rdkit[1]
+        job = PoseConsistencyJob(reference, reference_label, poses, options,
+                                 receptor_pdb=receptor_pdb, cached_protein=cached)
+        self.consistency_busy.emit(True)
+        self._consistency_job = self._submit(
+            job, lambda result, label=reference_label: self._consistency_done(label, result))
+
+    def _consistency_done(self, reference_label: str, result: tuple) -> None:
+        self._consistency_job = None
+        protein, results = result
+        if protein is not None and self.receptor is not None:
+            self._cached_protein_rdkit = (self.receptor.prepared_pdb, protein)
+        # Results first, then idle: a listener that treats "no longer busy" as a failed run must
+        # already have seen the results by the time it is told the job stopped.
+        self.consistency_ready.emit(reference_label, results)
+        self.consistency_busy.emit(False)
 
     # -------------------------------------------------------------- selection
     def set_selection(self, detail: dict, summary: str) -> None:
