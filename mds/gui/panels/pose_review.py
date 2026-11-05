@@ -1,8 +1,14 @@
-"""Compact controls for fixed-reference, pose-by-pose visual comparison."""
+"""Compact controls for fixed-reference, pose-by-pose visual comparison.
+
+Everything sits on one row. The two display toggles live behind a *Display* button rather than
+as permanent check boxes: they are set once and then left alone, so they do not earn standing
+space above a table the user reads constantly. The no-reference hint occupies a second row that
+collapses to nothing as soon as a reference exists, which is the only state where it helps.
+"""
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QLabel, QMenu,
+                               QToolButton, QVBoxLayout, QWidget)
 
 NO_REFERENCE_HINT = ("No reference ligand yet — prepare a receptor with a co-crystal ligand, or "
                      "right-click any ligand in Project Explorer ▸ Use as pose reference.")
@@ -18,57 +24,63 @@ class PoseReviewBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.previous = QPushButton("◀ Previous")
-        self.next = QPushButton("Next ▶")
+        self.previous = QToolButton()
+        self.previous.setText("◀")
+        self.next = QToolButton()
+        self.next.setText("▶")
         self.previous.setToolTip("Previous pose in the current table order (Alt+Left)")
         self.next.setToolTip("Next pose in the current table order (Alt+Right)")
-        self.position = QLabel("0 / 0")
-        self.position.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.position = QLabel("Pose 0 / 0")
         self.position.setTextFormat(Qt.TextFormat.PlainText)
         self.position.setToolTip("Position within the poses currently listed by the table's sort and filter.")
         self.reference = QComboBox()
-        self.reference.setMinimumContentsLength(8)
+        self.reference.setMinimumContentsLength(10)
         self.reference.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.reference.setToolTip("Choose the reference ligand to keep visible while browsing.")
         self.reference_label = QLabel("Reference:")
         self.reference_label.setBuddy(self.reference)
-        self.lock_reference = QCheckBox("Lock reference")
+        self.lock_reference = QCheckBox("Lock")
         self.lock_reference.setToolTip(LOCK_TIP)
-        self.keep_camera = QCheckBox("Keep camera")
-        self.keep_camera.setChecked(True)
+
+        self.display = QToolButton()
+        self.display.setText("Display")
+        self.display.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.display.setToolTip("Viewer options that apply while you browse poses.")
+        menu = QMenu(self.display)
+        self.keep_camera = QAction("Keep camera", menu, checkable=True, checked=True)
         self.keep_camera.setToolTip(CAMERA_TIP)
-        self.hide_protein = QCheckBox("Hide protein")
-        self.hide_protein.setToolTip("Hide protein objects without deleting them; uncheck to restore their visibility.")
-        self.fit = QPushButton("Fit view")
+        self.hide_protein = QAction("Hide protein", menu, checkable=True)
+        self.hide_protein.setToolTip("Hide protein objects without deleting them; uncheck to "
+                                     "restore their visibility.")
+        menu.addAction(self.keep_camera)
+        menu.addAction(self.hide_protein)
+        self.display.setMenu(menu)
+
+        self.fit = QToolButton()
+        self.fit.setText("Fit")
         self.fit.setToolTip("Frame the locked reference and current pose together. Never realigns atoms.")
         self.hint = QLabel(NO_REFERENCE_HINT)
         self.hint.setWordWrap(True)
         self.hint.setTextFormat(Qt.TextFormat.PlainText)
         self.hint.setEnabled(False)
 
-        box = QGroupBox("Pose review")
-        grid = QGridLayout(box)
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(4)
-        grid.addWidget(self.previous, 0, 0)
-        grid.addWidget(self.position, 0, 1)
-        grid.addWidget(self.next, 0, 2)
-        grid.setColumnStretch(1, 1)
-        reference_row = QHBoxLayout()
-        reference_row.addWidget(self.reference_label)
-        reference_row.addWidget(self.reference, 1)
-        reference_row.addWidget(self.lock_reference)
-        grid.addLayout(reference_row, 1, 0, 1, 3)
-        toggles = QHBoxLayout()
-        toggles.addWidget(self.keep_camera)
-        toggles.addWidget(self.hide_protein)
-        toggles.addStretch(1)
-        toggles.addWidget(self.fit)
-        grid.addLayout(toggles, 2, 0, 1, 3)
-        grid.addWidget(self.hint, 3, 0, 1, 3)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        for widget in (self.previous, self.next, self.position):
+            row.addWidget(widget)
+        row.addStretch(1)
+        for widget in (self.reference_label, self.reference, self.lock_reference,
+                       self.display, self.fit):
+            row.addWidget(widget)
+        # A grid, so the hidden hint's row collapses to nothing instead of leaving a gap.
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setVerticalSpacing(2)
+        grid.addLayout(row, 0, 0)
+        grid.addWidget(self.hint, 1, 0)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(box)
+        layout.addLayout(grid)
 
         self.previous.clicked.connect(lambda: self.step_requested.emit(-1))
         self.next.clicked.connect(lambda: self.step_requested.emit(1))

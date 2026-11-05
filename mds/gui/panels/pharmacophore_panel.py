@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QHBoxL
                                QVBoxLayout, QWidget)
 
 from mds.chem.pharmacophore import CAVEAT, Pharmacophore, derive
+from mds.gui.panels.common import CaveatBar, ElidedLabel
 
 FEATURE_COLUMNS = ["Feature", "Partner residue(s)", "Tolerance (Å)"]
 MATCH_COLUMNS = ["Ligand", "Pose", "Recovery", "Matched", "Missed features"]
@@ -60,9 +61,7 @@ class PharmacophorePanel(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._export)
 
-        self.status = QLabel("Select a pose, then derive a pharmacophore from it.")
-        self.status.setWordWrap(True)
-        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status = ElidedLabel("Select a pose, then derive a pharmacophore from it.")
 
         self.features = QTableWidget(0, len(FEATURE_COLUMNS))
         self.features.setHorizontalHeaderLabels(FEATURE_COLUMNS)
@@ -88,9 +87,6 @@ class PharmacophorePanel(QWidget):
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
 
-        caveat = QLabel(f"<small>{CAVEAT}</small>")
-        caveat.setWordWrap(True)
-
         bar = QHBoxLayout()
         bar.addWidget(self.derive_btn)
         bar.addWidget(self.score_btn)
@@ -98,11 +94,12 @@ class PharmacophorePanel(QWidget):
         bar.addWidget(self.export_btn)
         bar.addStretch(1)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 2, 0, 0)
+        layout.setSpacing(3)
         layout.addLayout(bar)
         layout.addWidget(self.status)
         layout.addWidget(split, 1)
-        layout.addWidget(caveat)
+        layout.addWidget(CaveatBar(CAVEAT))
 
         controller.interactions_ready.connect(self._interactions_ready)
         controller.pharmacophore_matched.connect(self._matched)

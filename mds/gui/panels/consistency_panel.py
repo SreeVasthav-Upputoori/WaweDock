@@ -6,14 +6,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
-                               QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
-                               QWidget)
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+                               QHeaderView, QLabel, QMenu, QPushButton, QSplitter, QTableWidget,
+                               QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from mds.chem.pose_consistency import (CAVEAT, CONSERVED, DIFFERENT, FLIPPED, METHOD_WEIGHTS,
                                        OUTLIER, PARTIAL, VERDICT_THRESHOLDS, ConsistencyOptions,
                                        rows)
+from mds.gui.panels.common import CaveatBar
 
 COLUMNS = [
     ("Pose", "The docked pose being compared. Select a row to view it."),
@@ -46,6 +47,13 @@ _VERDICT_COLORS = {
     CONSERVED: "#1e7a3c", PARTIAL: "#8a6d00", FLIPPED: "#8a3fb0",
     DIFFERENT: "#8a4b00", OUTLIER: "#7a2222",
 }
+
+
+def _separator() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.VLine)
+    line.setFrameShadow(QFrame.Shadow.Sunken)
+    return line
 
 
 class _NumItem(QTableWidgetItem):
@@ -86,14 +94,23 @@ class ConsistencyPanel(QWidget):
         self.use_pose_btn.clicked.connect(self._use_selected_pose)
         self.use_pose_btn.setEnabled(False)
 
-        self.interactions = QCheckBox("Interaction fingerprint (ProLIF)")
-        self.interactions.setChecked(True)
+        # The three axis switches are set once for a run and then left alone, so they sit behind
+        # a button rather than taking a standing row above the results they produce.
+        self.axes_btn = QToolButton()
+        self.axes_btn.setText("Axes")
+        self.axes_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        axes_menu = QMenu(self.axes_btn)
+        self.interactions = QAction("Interaction fingerprint (ProLIF)", axes_menu,
+                                    checkable=True, checked=True)
         self.interactions.setToolTip("Classify each pose's contacts and compare the sets. The "
                                      "slowest axis, and the only one needing Open Babel.")
-        self.shape = QCheckBox("Shape and volume overlap")
-        self.shape.setChecked(True)
-        self.features = QCheckBox("Pharmacophore features")
-        self.features.setChecked(True)
+        self.shape = QAction("Shape and volume overlap", axes_menu, checkable=True, checked=True)
+        self.features = QAction("Pharmacophore features", axes_menu, checkable=True, checked=True)
+        for action in (self.interactions, self.shape, self.features):
+            axes_menu.addAction(action)
+            action.toggled.connect(lambda _on: self._axes_changed())
+        self.axes_btn.setMenu(axes_menu)
+        self._axes_changed()
 
         self.compare_btn = QPushButton("Compare all poses")
         self.compare_btn.clicked.connect(self._compare)
@@ -123,46 +140,47 @@ class ConsistencyPanel(QWidget):
         self.detail.setReadOnly(True)
         self.detail.setPlaceholderText("Select a pose to see which reference contacts it keeps, "
                                        "loses and gains.")
+        # Hidden until there is something in it: an empty pane is 75px taken from the table.
+        self.detail.setVisible(False)
 
-        controls = QGroupBox("Reference binding mode")
-        form = QFormLayout(controls)
-        reference_row = QHBoxLayout()
-        reference_row.addWidget(self.reference, 1)
-        reference_row.addWidget(self.use_pose_btn)
-        form.addRow("Reference:", reference_row)
-        axes = QHBoxLayout()
-        axes.addWidget(self.interactions)
-        axes.addWidget(self.shape)
-        axes.addWidget(self.features)
-        axes.addStretch(1)
-        form.addRow("Include:", axes)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.compare_btn)
-        buttons.addWidget(self.export_btn)
-        buttons.addStretch(1)
-        form.addRow("", buttons)
+        label = QLabel("Reference:")
+        label.setBuddy(self.reference)
+        controls = QHBoxLayout()
+        controls.setSpacing(4)
+        for widget in (label, self.reference, self.use_pose_btn, _separator(), self.axes_btn,
+                       self.compare_btn, self.export_btn):
+            controls.addWidget(widget)
+        controls.setStretchFactor(self.reference, 1)
+        controls.addStretch(0)
 
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.table)
         split.addWidget(self.detail)
-        split.setStretchFactor(0, 3)
+        split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
-
-        caveat = QLabel(f"<small>{CAVEAT}</small>")
-        caveat.setWordWrap(True)
+        self.detail.setMaximumHeight(140)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(controls)
+        layout.setContentsMargins(0, 2, 0, 0)
+        layout.setSpacing(3)
+        layout.addLayout(controls)
         layout.addWidget(self.status)
         layout.addWidget(split, 1)
-        layout.addWidget(caveat)
+        layout.addWidget(CaveatBar(CAVEAT))
 
         controller.consistency_busy.connect(self._busy)
         controller.consistency_ready.connect(self._ready)
         controller.reference_changed.connect(lambda _name: self.refresh_references())
         controller.docking_finished.connect(lambda _outcomes: self.refresh_references())
         self.refresh_references()
+
+    def _axes_changed(self) -> None:
+        """Name the optional axes on the button, so a switched-off axis is never a hidden one."""
+        off = [action.text().split(" (")[0] for action in
+               (self.interactions, self.shape, self.features) if not action.isChecked()]
+        self.axes_btn.setText("All axes" if not off else f"Axes ({3 - len(off)}/3)")
+        self.axes_btn.setToolTip("Every axis is included."
+                                 if not off else "Switched off: " + ", ".join(off))
 
     # ------------------------------------------------------------ reference choice
     def refresh_references(self) -> None:
@@ -227,6 +245,7 @@ class ConsistencyPanel(QWidget):
         self._awaiting = False
         self.table.setRowCount(0)
         self.detail.clear()
+        self.detail.setVisible(False)
         self.export_btn.setEnabled(False)
         self.status.setText("Choose a reference pose, then compare.")
         self.refresh_references()       # last, so it can replace that with the no-reference hint
@@ -343,6 +362,7 @@ class ConsistencyPanel(QWidget):
         if result.notes:
             parts.append(block("Notes", result.notes))
         self.detail.setHtml("".join(parts))
+        self.detail.setVisible(True)
 
     # ------------------------------------------------------------------------ export
     def _export(self) -> None:

@@ -91,14 +91,14 @@ is carried over as well.
 
 ## Pose-by-pose review
 
-In **Results & Analysis**, the **Pose review** group holds these controls. Choose a
-reference ligand, check **Lock reference**, and check **Hide protein**. Use **Fit
-view** once, then **Previous / Next** (or **Alt+Left / Alt+Right**, or the pose
+In **Results & Analysis**, one row above the pose table holds these controls. Choose a
+reference ligand, check **Lock**, and tick **Hide protein** under **Display**. Use **Fit**
+once, then **◀ / ▶** (or **Alt+Left / Alt+Right**, or the pose
 table) to browse. The position readout names the pose you are looking at —
 `Pose 3 / 6 — caffeine #3 · -5.08 kcal/mol`. The reference keeps its coordinates and
 stays visible; protein objects are hidden without deletion and return to their prior
-visibility when unchecked. **Keep camera** is on by default and enforced while the
-reference is locked. Docked pose colours and representation carry across pose changes.
+visibility when unticked. **Keep camera**, also under **Display**, is on by default and
+enforced while the reference is locked. Docked pose colours and representation carry across pose changes.
 Navigation follows the current table sort/filter. Fit View never realigns atoms.
 
 Receptor preparation offers each extracted co-crystal ligand as a reference
@@ -177,8 +177,8 @@ Preparation and docking continue to run in background jobs.
 Use the top-level **Prepare | Dock | Results & Analysis** switcher to change
 workspaces. Results & Analysis places a searchable, numerically sortable pose
 table beside the same molecular viewer, with a resizable divider. Selecting a row
-shows its actual docking pose. Ctrl/Shift-select rows and open **Compare Poses**
-to compare their scores and RMSD metrics; **Score Comparison** charts the best
+shows its actual docking pose. Ctrl/Shift-select rows and open **Compare**
+to compare their scores and RMSD metrics; **Scores** charts the best
 score per ligand, and clicking a bar selects that pose. Contacts and ProLIF
 interaction analysis remain available in the analysis tabs. The **Export** menu
 provides CSV, Excel, SDF and a standalone HTML metrics report; exports include all
@@ -221,7 +221,7 @@ UI colour scheme is unchanged.
    otherwise, with a clear message rather than a silent failure or a faked result.
 8. **Results ▸ Pharmacophore** — turns the selected pose's classified interactions into a reusable
    3D query (see below), then scores every other pose by how much of it they reproduce.
-9. **Results ▸ Pose Consistency** — picks one trusted reference pose and reports how much of that
+9. **Results ▸ Consistency** — picks one trusted reference pose and reports how much of that
    binding mode every other pose reproduces: RMSD (or MCS RMSD across different ligands), kept/lost
    /gained interactions, pharmacophore feature recovery, centroid shift, long-axis angle and volume
    overlap, with a verdict per pose.
@@ -266,9 +266,10 @@ experimentally verified interactions.
 ## Pose consistency
 
 A docking score says a pose is favourable; it does not say the pose *binds the way the reference
-does*. **Results & Analysis ▸ Pose Consistency** answers that second question. Choose the reference
+does*. **Results & Analysis ▸ Consistency** answers that second question. Choose the reference
 — the co-crystal ligand, or select any docked pose and press **Use selected pose** — then
-**Compare all poses**. Each pose is measured along six independent axes:
+**Compare all poses** (the **Axes** button switches individual axes off). Each pose is measured
+along six independent axes:
 
 | Axis | What it measures |
 |---|---|

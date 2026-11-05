@@ -20,6 +20,7 @@ from mds.gui.panels.score_chart import ScoreChart
 from mds.gui.panels.pose_review import PoseReviewBar
 from mds.gui.panels.pharmacophore_panel import PharmacophorePanel
 from mds.gui.panels.consistency_panel import ConsistencyPanel
+from mds.gui.panels.common import CaveatBar, ElidedLabel
 
 COLUMNS = ["Ligand", "Pose", "Score (kcal/mol)", "RMSD lb", "RMSD ub", "RMSD to crystal (Å)", "Conformer"]
 
@@ -47,8 +48,7 @@ class InteractionsPanel(QWidget):
         self.analyse_btn.setToolTip("Classifies contacts as hydrogen bonds, hydrophobic contacts, "
                                     "pi-stacking, salt bridges, etc. using distance AND angle rules.")
         self.analyse_btn.clicked.connect(self._analyse)
-        self.status = QLabel("Select a pose, then click Analyse.")
-        self.status.setWordWrap(True)
+        self.status = ElidedLabel("Select a pose, then click Analyse.")
 
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Residue", "Interaction type(s)"])
@@ -63,9 +63,6 @@ class InteractionsPanel(QWidget):
         self._diagram_stack.addWidget(self._placeholder)
         self._diagram = None   # created lazily: QtWebEngine import is somewhat heavy
 
-        caveat = QLabel(f"<small>{INTERACTION_CAVEAT}</small>")
-        caveat.setWordWrap(True)
-
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.table)
         split.addWidget(self._diagram_stack)
@@ -73,13 +70,14 @@ class InteractionsPanel(QWidget):
         split.setStretchFactor(1, 2)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 2, 0, 0)
+        layout.setSpacing(3)
         bar = QHBoxLayout()
         bar.addWidget(self.analyse_btn)
         bar.addWidget(self.status, 1)
         layout.addLayout(bar)
         layout.addWidget(split, 1)
-        layout.addWidget(caveat)
+        layout.addWidget(CaveatBar(INTERACTION_CAVEAT))
 
         controller.interactions_started.connect(self._started)
         controller.interactions_ready.connect(self._ready)
@@ -174,9 +172,7 @@ class ResultsPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.currentCellChanged.connect(lambda *_args: self._selection_changed())
 
-        self.contact_status=QLabel("Select a pose to preview contacts.")
-        self.contact_status.setTextFormat(Qt.TextFormat.PlainText)
-        self.contact_status.setWordWrap(True)
+        self.contact_status = ElidedLabel("Select a pose to preview contacts.")
         self.contacts = QTableWidget(0, 3)
         self.contacts.setHorizontalHeaderLabels(["Residue", "Min. distance (Å)", "Distance-based candidates"])
         self.contacts.verticalHeader().hide()
@@ -184,14 +180,13 @@ class ResultsPanel(QWidget):
         self.contacts.horizontalHeader().setStretchLastSection(True)
         self.contacts.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.contacts.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        caveat = QLabel(f"<small>{CAVEAT}</small>")
-        caveat.setWordWrap(True)
         contact_box = QWidget()
         cl = QVBoxLayout(contact_box)
-        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setContentsMargins(0, 2, 0, 0)
+        cl.setSpacing(3)
         cl.addWidget(self.contact_status)
         cl.addWidget(self.contacts)
-        cl.addWidget(caveat)
+        cl.addWidget(CaveatBar(CAVEAT))
 
         self.interactions_panel = InteractionsPanel(controller)
         self.pharmacophore_panel = PharmacophorePanel(controller)
@@ -204,16 +199,16 @@ class ResultsPanel(QWidget):
         self.analysis_tabs.addTab(self.pharmacophore_panel, "Pharmacophore")
         self.consistency_panel = ConsistencyPanel(controller)
         self.consistency_panel.pose_requested.connect(self.select_pose)
-        self.analysis_tabs.addTab(self.consistency_panel, "Pose Consistency")
+        self.analysis_tabs.addTab(self.consistency_panel, "Consistency")
         self.comparison = QTableWidget(0, len(COLUMNS))
         self.comparison.setHorizontalHeaderLabels(COLUMNS)
         self.comparison.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.comparison.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.analysis_tabs.addTab(self.comparison, "Compare Poses")
+        self.analysis_tabs.addTab(self.comparison, "Compare")
         self.score_chart = ScoreChart()
         self.score_chart.set_outcomes([])
         self.score_chart.pose_selected.connect(self.select_pose)
-        self.analysis_tabs.addTab(self.score_chart, "Score Comparison")
+        self.analysis_tabs.addTab(self.score_chart, "Scores")
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.addWidget(self.table)
@@ -222,8 +217,7 @@ class ResultsPanel(QWidget):
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
 
-        self.summary = QLabel("No docking results yet.")
-        self.summary.setWordWrap(True)
+        self.summary = ElidedLabel("No docking results yet.")
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search ligands, poses or scores...")
         self.search.setClearButtonEnabled(True)
@@ -241,21 +235,20 @@ class ResultsPanel(QWidget):
         open_btn.setText("Run Folder")
         open_btn.clicked.connect(self._open_folder)
         buttons = QHBoxLayout()
+        buttons.setSpacing(4)
         buttons.addWidget(self.search, 1)
+        buttons.addWidget(self.match_count)
         buttons.addWidget(self.export_button)
         buttons.addWidget(open_btn)
 
-        disclaimer = QLabel(f"<small><i>{SCORE_DISCLAIMER}</i></small>")
-        disclaimer.setWordWrap(True)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(4, 4, 4, 2)
+        layout.setSpacing(3)
         layout.addWidget(self.summary)
         layout.addLayout(buttons)
         layout.addWidget(self.review_bar)
-        layout.addWidget(self.match_count)
         layout.addWidget(self.splitter, 1)
-        layout.addWidget(disclaimer)
+        layout.addWidget(CaveatBar(SCORE_DISCLAIMER))
         controller.docking_finished.connect(self.show_outcomes)
 
     def show_outcomes(self, outcomes: list[LigandOutcome]) -> None:
