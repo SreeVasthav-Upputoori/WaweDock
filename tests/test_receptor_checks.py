@@ -62,7 +62,9 @@ def test_checks_summarize_water_metal_cofactor_and_protonation():
     assert inspect_receptor(DATA/'3PTB.pdb',ReceptorOptions(chains=['Z'])).errors
 
 
-@pytest.mark.parametrize('options',[ReceptorOptions(ph=float('nan')),ReceptorOptions(ph=15),ReceptorOptions(drop_waters=False)])
+@pytest.mark.parametrize('options',[ReceptorOptions(ph=float('nan')),ReceptorOptions(ph=15),
+                                    ReceptorOptions(drop_waters=False),
+                                    ReceptorOptions(water_cutoff=1.0)])
 def test_unsupported_options_fail_before_preparation(tmp_path,options):
     assert inspect_receptor(DATA/'3PTB.pdb',options).errors
     with pytest.raises(PreparationError,match='Invalid receptor'):

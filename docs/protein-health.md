@@ -21,6 +21,18 @@ Gemmi supplies parsing, entity information and sequence alignment; see its [stru
 
 **Not performed:** Ramachandran/rotamer validation, full ligand stereochemistry, charge/force-field checks, pKa prediction or reconstruction. All findings require review. Input coordinates may themselves be experimental or computational; this module cannot establish their provenance. The diagnostic actions do not reconstruct coordinates. Supported, explicitly selected repairs are described below.
 
+## Receptor water handling
+
+Standard preparation removes bulk crystallographic waters, but conserved waters can
+mediate ligand binding. The Receptor Preparation panel therefore has an opt-in
+**Retain binding-site waters** setting. It retains crystallographic water residues
+within the configured cutoff (default 4 Angstrom) of an extracted co-crystallised
+ligand and removes the rest. Retained waters are carried into the receptor PDB/PDBQT
+as oxygen-only HETATM records and are reported individually. This distance rule is
+only a relevance heuristic; inspect hydrogen bonding, occupancy, B factors and
+experimental evidence before docking. Waters are not retained when no extracted
+ligand is present.
+
 ## Export and lifecycle
 
 Export the JSON report from the dock. It includes source SHA-256, backend/version, findings, exact atom selectors, coverage and limitations. Structure edits, Undo/Redo, new imports and project changes invalidate the report and cancel outdated work. Cancel does not change coordinates. The input is never written by the diagnostics module.

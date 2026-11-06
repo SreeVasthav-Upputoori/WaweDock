@@ -50,6 +50,8 @@ class ReceptorOptions:
     keep_metals: bool = True               # retain supported catalytic/structural metals
     ph: float = 7.4
     drop_waters: bool = True
+    retain_binding_site_waters: bool = False
+    water_cutoff: float = 4.0             # Angstrom distance to extracted ligand atoms
 
 
 @dataclass
@@ -180,6 +182,8 @@ def _check_options(opts: ReceptorOptions, report: Report) -> None:
     if not opts.drop_waters:
         report.error("Retaining explicit waters is not supported by this receptor pipeline. "
                      "Use drop_waters=True; waters will not be silently discarded.")
+    if not math.isfinite(opts.water_cutoff) or not 2.0 <= opts.water_cutoff <= 6.0:
+        report.error("Binding-site water cutoff must be finite and between 2 and 6 Angstrom.")
 
 
 def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Report:
@@ -217,7 +221,11 @@ def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Re
         rep.warn(f"Chain break: {line}. Missing segments are not rebuilt.")
     hetero = classify_hetero(st)
     waters = sum(h.kind == "water" for h in hetero)
-    rep.info(f"Waters: {waters}; all will be removed for standard Vina preparation.")
+    if opts.retain_binding_site_waters:
+        rep.info(f"Waters: {waters}; waters within {opts.water_cutoff:g} Angstrom of an "
+                 "extracted ligand will be retained as explicit binding-site waters.")
+    else:
+        rep.info(f"Waters: {waters}; all will be removed for standard Vina preparation.")
     for h in hetero:
         if h.kind == "metal":
             rep.info(f"Metal {h.label}: " + ("retained with a Meeko template." if opts.keep_metals
@@ -367,6 +375,13 @@ def prepare_receptor(
     kept_ions = gemmi.Structure()
     kept_model = gemmi.Model("1")
     water_count = 0
+    retained_water_count = 0
+    ligand_positions = [
+        atom.pos for ch in st[0] for res in ch
+        if any(x.kind == "ligand" and x.chain == ch.name and x.number == res.seqid.num
+               and x.name == res.name for x in hetero)
+        for atom in res
+    ]
     for ch in st[0]:
         drop: list[int] = []
         for i, res in enumerate(ch):
@@ -380,6 +395,15 @@ def prepare_receptor(
                 continue
             if h.kind == "water":
                 water_count += 1
+                if (opts.retain_binding_site_waters and ligand_positions
+                        and any(atom.pos.dist(ligand) <= opts.water_cutoff
+                                for atom in res for ligand in ligand_positions)):
+                    tmp_chain = gemmi.Chain(ch.name)
+                    tmp_chain.add_residue(res)
+                    kept_model.add_chain(tmp_chain)
+                    retained_water_count += 1
+                    rep.info(f"Water {h.label} retained as a binding-site water "
+                             f"(within {opts.water_cutoff:g} Angstrom of an extracted ligand).")
                 drop.append(i)
             elif h.kind == "metal" and opts.keep_metals:
                 template = SUPPORTED_METALS[res.name]
@@ -409,8 +433,11 @@ def prepare_receptor(
         for i in reversed(drop):
             del ch[i]
     if water_count:
-        rep.info(f"{water_count} water molecule(s) removed "
-                 "(explicit waters are not used in standard Vina docking).")
+        rep.info(f"{water_count - retained_water_count} water molecule(s) removed.")
+    if retained_water_count:
+        rep.warn(f"{retained_water_count} explicit binding-site water molecule(s) retained as "
+                 "oxygen-only HETATM records; validate their structural and electrostatic "
+                 "role before docking.")
     kept_ions.add_model(kept_model)
 
     # -- drop chains left empty

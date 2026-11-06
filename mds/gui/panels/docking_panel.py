@@ -203,6 +203,12 @@ class DockingPanel(QScrollArea):
         self.keep_metals = QCheckBox("Keep metal ions")
         self.keep_metals.setToolTip("Retain Zn, Mg, Ca, Mn, Fe and Cu ions during receptor preparation.")
         self.keep_metals.setChecked(True)
+        self.retain_waters = QCheckBox("Retain binding-site waters")
+        self.retain_waters.setToolTip("Keep crystallographic waters within 4 A of an extracted ligand.")
+        self.water_cutoff = _spin(2.0, 6.0, 4.0, 0.5)
+        self.water_cutoff.setSuffix(" A")
+        self.water_cutoff.setEnabled(False)
+        self.retain_waters.toggled.connect(self.water_cutoff.setEnabled)
         self.ph = _spin(4.0, 10.0, 7.4, 0.1)
         self.check_rec_btn = QPushButton("Check Receptor")
         self.check_rec_btn.setToolTip("Review selected chains, missing backbone atoms, chain gaps, "
@@ -214,8 +220,10 @@ class DockingPanel(QScrollArea):
         self.chains.textChanged.connect(self.rec_check.clear)
         self.ph.valueChanged.connect(self.rec_check.clear)
         self.keep_metals.toggled.connect(self.rec_check.clear)
+        self.retain_waters.toggled.connect(self.rec_check.clear)
+        self.water_cutoff.valueChanged.connect(self.rec_check.clear)
         self.prep_rec_btn = QPushButton("Prepare Receptor")
-        self.prep_rec_btn.setToolTip("Remove waters, rebuild missing atoms, assign protonation at the "
+        self.prep_rec_btn.setToolTip("Remove non-selected waters, rebuild missing atoms, assign protonation at the "
                                      "chosen pH (PDB2PQR/PROPKA), build PDBQT (Meeko)")
         self.prep_rec_btn.clicked.connect(self._prepare_receptor)
         self.rec_status = QLabel("")
@@ -223,6 +231,8 @@ class DockingPanel(QScrollArea):
         f.addRow(self.rec_label)
         f.addRow("Chains", self.chains)
         f.addRow(self.keep_metals)
+        f.addRow(self.retain_waters)
+        f.addRow("Water cutoff", self.water_cutoff)
         f.addRow("Protonation pH", self.ph)
         self.health_btn = QPushButton("Protein Health & Repair")
         self.health_btn.setToolTip("Open read-only structural diagnostics and navigate issues in the molecular viewer.")
@@ -241,10 +251,13 @@ class DockingPanel(QScrollArea):
 
     def _receptor_options(self) -> ReceptorOptions:
         chains = [x.strip() for x in self.chains.text().split(",") if x.strip()] or None
-        return ReceptorOptions(chains=chains, keep_metals=self.keep_metals.isChecked(), ph=self.ph.value())
+        return ReceptorOptions(chains=chains, keep_metals=self.keep_metals.isChecked(), ph=self.ph.value(),
+                               retain_binding_site_waters=self.retain_waters.isChecked(),
+                               water_cutoff=self.water_cutoff.value())
 
     def _set_receptor_check_busy(self, busy: bool) -> None:
-        for widget in (self.check_rec_btn, self.chains, self.ph, self.keep_metals):
+        for widget in (self.check_rec_btn, self.chains, self.ph, self.keep_metals,
+                       self.retain_waters, self.water_cutoff):
             widget.setEnabled(not busy)
         if busy:
             self.rec_check.setText("Checking receptor...")
