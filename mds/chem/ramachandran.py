@@ -20,22 +20,25 @@ from typing import Callable
 
 import gemmi
 
-# Gaussian basins: (mean_phi, mean_psi, sd_phi, sd_psi, weight), degrees.
+# Correlated Gaussian basins:
+# (mean_phi, mean_psi, sd_phi, sd_psi, correlation, weight), degrees.
+# The correlations preserve the diagonal/curved shape of real backbone
+# populations better than independent rectangular tolerances.
 _GENERAL = [
-    (-63.0, -43.0, 15.0, 17.0, 1.00),   # alpha-R, right-handed helix
-    (-125.0, 128.0, 26.0, 28.0, 0.95),  # beta sheet
-    (-68.0, 148.0, 14.0, 20.0, 0.50),   # polyproline-II
-    (57.0, 47.0, 14.0, 18.0, 0.18),     # alpha-L, left-handed helix
+    (-63.0, -43.0, 15.0, 17.0, -0.25, 1.00),  # alpha-R
+    (-125.0, 128.0, 26.0, 28.0, -0.35, 0.95),  # beta sheet
+    (-68.0, 148.0, 14.0, 20.0, -0.20, 0.50),   # polyproline-II
+    (57.0, 47.0, 14.0, 18.0, 0.20, 0.18),      # alpha-L
 ]
 # Proline phi is restricted by the ring (~-63); two psi basins.
 _PROLINE = [
-    (-63.0, -35.0, 12.0, 18.0, 0.90),
-    (-63.0, 150.0, 12.0, 20.0, 0.90),
+    (-63.0, -35.0, 12.0, 18.0, -0.15, 0.90),
+    (-63.0, 150.0, 12.0, 20.0, -0.15, 0.90),
 ]
 
 
 def _mirror(basins):
-    return [(-a, -b, sa, sb, w) for (a, b, sa, sb, w) in basins]
+    return [(-a, -b, sa, sb, rho, w) for (a, b, sa, sb, rho, w) in basins]
 
 
 # Glycine is near-symmetric in phi/psi, so mirror the general basins.
@@ -54,14 +57,15 @@ def _circular(delta: float) -> float:
 
 
 def _density(phi: float, psi: float, basins) -> float:
-    # phi is treated linearly (no basin lies near +/-180, and far-positive phi
-    # is genuinely rare), while psi stays periodic so the beta basin wraps
-    # correctly across +/-180.
+    # Both torsions are circular variables. The wrapped differences also make
+    # the density continuous at the plot boundary.
     total = 0.0
-    for mphi, mpsi, sphi, spsi, weight in basins:
-        dp = (phi - mphi) / sphi
+    for mphi, mpsi, sphi, spsi, rho, weight in basins:
+        dp = _circular(phi - mphi) / sphi
         dq = _circular(psi - mpsi) / spsi
-        total += weight * math.exp(-0.5 * (dp * dp + dq * dq))
+        scale = 1.0 - rho * rho
+        exponent = (dp * dp - 2.0 * rho * dp * dq + dq * dq) / scale
+        total += weight * math.exp(-0.5 * exponent) / math.sqrt(scale)
     return total
 
 
@@ -81,6 +85,8 @@ def classify(phi: float, psi: float, kind: str = 'general') -> str:
 
     kind is 'glycine', 'proline' or 'general'.
     """
+    if not (math.isfinite(phi) and math.isfinite(psi)):
+        return 'outlier'
     key = kind if kind in _BASINS else 'general'
     relative = _density(phi, psi, _BASINS[key]) / _PEAK[key]
     if relative >= _FAVORED_FRAC:
@@ -165,7 +171,7 @@ def summarize(points: list[RamaPoint]) -> dict:
     counts = {k: sum(p.classification == k for p in points) for k in ('favored', 'allowed', 'outlier')}
     percent = {k: round(100.0 * v / total, 1) if total else 0.0 for k, v in counts.items()}
     return {'total': total, 'counts': counts, 'percent': percent,
-            'method': 'Gaussian-mixture density model of the Ramachandran distribution; not MolProbity contours.'}
+            'method': 'Correlated circular Gaussian-mixture density model of the Ramachandran distribution; not MolProbity contours.'}
 
 
 # --- Plot -------------------------------------------------------------------

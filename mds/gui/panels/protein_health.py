@@ -143,7 +143,7 @@ class ProteinHealthPanel(QWidget):
         layout.addWidget(self.report_summary_btn)
         self.rama_btn = QPushButton('Ramachandran plot')
         self.rama_btn.setEnabled(False)
-        self.rama_btn.setToolTip('Backbone phi/psi plot with a favored/allowed/outlier region screen. Coarse region boxes, not MolProbity contours.')
+        self.rama_btn.setToolTip('Backbone phi/psi plot with a favored/allowed/outlier density screen. Not MolProbity contours.')
         self.rama_btn.clicked.connect(self._show_ramachandran)
         layout.addWidget(self.rama_btn)
         self.session.progress_changed.connect(self._progress)

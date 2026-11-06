@@ -172,7 +172,7 @@ def check_protein(source: Path, *, progress: Callable = lambda *_: None,
     ]
     report.limitations = [
         'Geometric screening is not a full stereochemical validation or a docking-readiness certificate.',
-        'The Ramachandran screen uses fixed, generous phi/psi region boxes, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
+        'The Ramachandran screen uses a correlated circular density model, not MolProbity percentile contours; borderline conformations are not outliers and pre-proline is treated as general.',
         'Disulfides are assigned by SG-SG distance only; oxidation-state labels, cross-link chemistry and non-Cys covalent links are not verified.',
         'Termini are judged against the deposited entity sequence, not the full biological protein: an expression construct that is fully modelled shows no truncation even where the native chain continues.',
         'The rotamer screen compares only sp3 chi torsions to ideal staggered angles (+/-60/180); it is not a rotamer-library or MolProbity percentile analysis, and planar/aromatic terminal chi angles and proline are not assessed.',
