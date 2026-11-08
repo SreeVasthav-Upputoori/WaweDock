@@ -3,9 +3,11 @@ from pathlib import Path
 import gemmi
 import pytest
 from conftest import wait_until
-from mds.chem.receptor import (ReceptorOptions, _select_occupancy_conformers,
+from mds.chem.receptor import (ReceptorOptions, _apply_protonation_overrides,
+                               _select_occupancy_conformers, _validate_protonation_overrides,
                                inspect_receptor, prepare_receptor, read_structure)
 from mds.chem.report import PreparationError
+from mds.chem.report import Report
 
 DATA = Path(__file__).parent / "data"
 
@@ -60,6 +62,58 @@ def test_preparation_selects_highest_occupancy_conformer(incomplete_structure):
     assert len(ca_atoms) == 1
     assert ca_atoms[0].altloc in ("\0", " ")
     assert ca_atoms[0].occ == pytest.approx(1.0)
+
+
+def test_protonation_override_validation_requires_matching_residue_and_disulfide():
+    structure = gemmi.Structure()
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    for number, name in ((10, "HIS"), (11, "ASP"), (12, "CYS")):
+        residue = gemmi.Residue()
+        residue.name, residue.seqid, residue.het_flag = name, gemmi.SeqId(number, " "), "A"
+        atoms = [("CA", "C")] + ([("SG", "S")] if name == "CYS" else [])
+        for atom_name, element in atoms:
+            atom = gemmi.Atom()
+            atom.name, atom.element = atom_name, gemmi.Element(element)
+            atom.pos = gemmi.Position(float(number), 0, 0)
+            residue.add_atom(atom)
+        chain.add_residue(residue)
+    model.add_chain(chain)
+    structure.add_model(model)
+    report = Report()
+    valid = _validate_protonation_overrides(
+        structure,
+        ReceptorOptions(protonation_overrides={
+            ("A", 10, ""): "HIE",
+            ("A", 11, ""): "CYX",
+            ("A", 99, ""): "ASH",
+        }),
+        report,
+    )
+    assert valid == {("A", 10, ""): "HIE"}
+    assert len(report.errors) == 2
+
+
+def test_protonation_override_rewrites_only_selected_residue(tmp_path):
+    source = tmp_path / "input.pdb"
+    target = tmp_path / "output.pdb"
+    structure = gemmi.Structure()
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    for number, name in ((10, "HIS"), (11, "ASP")):
+        residue = gemmi.Residue()
+        residue.name, residue.seqid, residue.het_flag = name, gemmi.SeqId(number, " "), "A"
+        atom = gemmi.Atom()
+        atom.name, atom.element, atom.pos = "CA", gemmi.Element("C"), gemmi.Position(number, 0, 0)
+        residue.add_atom(atom)
+        chain.add_residue(residue)
+    model.add_chain(chain)
+    structure.add_model(model)
+    structure.write_minimal_pdb(str(source))
+    _apply_protonation_overrides(source, target, {("A", 10, ""): "HIE"})
+    changed = read_structure(target)
+    assert changed[0]["A"][0].name == "HIE"
+    assert changed[0]["A"][1].name == "ASP"
 
 
 def test_checks_summarize_water_metal_cofactor_and_protonation():

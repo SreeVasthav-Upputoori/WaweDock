@@ -52,6 +52,7 @@ class ReceptorOptions:
     drop_waters: bool = True
     retain_binding_site_waters: bool = False
     water_cutoff: float = 4.0             # Angstrom distance to extracted ligand atoms
+    protonation_overrides: dict[tuple[str, int, str], str] = field(default_factory=dict)
 
 
 @dataclass
@@ -81,6 +82,18 @@ PROTONATION_STATES = {
     "LYN": ("LYS", "neutral (deprotonated) lysine; normally +1", True),
     "CYX": ("CYS", "cysteine in a disulfide bond, no thiol hydrogen", False),
 }
+
+_OVERRIDE_STATES = {
+    "HIS": frozenset({"HID", "HIE", "HIP"}),
+    "ASP": frozenset({"ASP", "ASH"}),
+    "GLU": frozenset({"GLU", "GLH"}),
+    "LYS": frozenset({"LYS", "LYN"}),
+    "CYS": frozenset({"CYS", "CYX"}),
+}
+_OVERRIDE_NAMES = frozenset().union(*_OVERRIDE_STATES.values())
+_DEFAULT_CHARGES = {"HIS": 0, "ASP": -1, "GLU": -1, "LYS": 1, "CYS": 0}
+_STATE_CHARGES = {"HIP": 1, "ASH": 0, "GLH": 0, "LYN": 0, "CYX": 0,
+                  "HID": 0, "HIE": 0, "ASP": -1, "GLU": -1, "LYS": 1, "CYS": 0}
 
 
 @dataclass
@@ -184,13 +197,86 @@ def _check_options(opts: ReceptorOptions, report: Report) -> None:
                      "Use drop_waters=True; waters will not be silently discarded.")
     if not math.isfinite(opts.water_cutoff) or not 2.0 <= opts.water_cutoff <= 6.0:
         report.error("Binding-site water cutoff must be finite and between 2 and 6 Angstrom.")
+    for key, state in opts.protonation_overrides.items():
+        if (not isinstance(key, tuple) or len(key) != 3 or not isinstance(key[0], str)
+                or not isinstance(key[1], int) or not isinstance(key[2], str)):
+            report.error("Protonation override keys must be (chain, residue number, insertion code).")
+        if not isinstance(state, str) or state not in PROTONATION_STATES and state not in {
+                s for states in _OVERRIDE_STATES.values() for s in states}:
+            report.error(f"Unsupported protonation override state '{state}'.")
+
+
+def _residue_state_name(name: str) -> str:
+    if name in _OVERRIDE_NAMES or name in PROTONATION_STATES:
+        return name
+    if len(name) == 4 and name[1:] in _OVERRIDE_NAMES:
+        return name[1:]
+    return name
+
+
+def _has_disulfide_partner(res: gemmi.Residue, structure: gemmi.Structure) -> bool:
+    sulfur = res.find_atom("SG", "*")
+    if sulfur is None:
+        return False
+    for other_chain in structure[0]:
+        for other in other_chain:
+            if other is res or _residue_state_name(other.name) != "CYS":
+                continue
+            other_sulfur = other.find_atom("SG", "*")
+            if other_sulfur is not None and sulfur.pos.dist(other_sulfur.pos) <= 2.3:
+                return True
+    return False
+
+
+def _validate_protonation_overrides(
+    st: gemmi.Structure, opts: ReceptorOptions, report: Report
+) -> dict[tuple[str, int, str], str]:
+    residues = {
+        (chain.name, res.seqid.num, res.seqid.icode.strip()): res
+        for chain in st[0] for res in chain
+    }
+    valid: dict[tuple[str, int, str], str] = {}
+    for key, state in opts.protonation_overrides.items():
+        res = residues.get(key)
+        if res is None:
+            report.error(f"Protonation override targets missing residue "
+                         f"{key[0]}:{key[1]}{key[2]}.")
+            continue
+        standard = _residue_state_name(res.name)
+        if standard in PROTONATION_STATES:
+            standard = PROTONATION_STATES[standard][0]
+        if standard not in _OVERRIDE_STATES or state not in _OVERRIDE_STATES[standard]:
+            report.error(f"Protonation override {key[0]}:{key[1]}{key[2]}={state} is "
+                         f"incompatible with residue {res.name}.")
+            continue
+        if state == "CYX" and not _has_disulfide_partner(res, st):
+            report.error(f"Protonation override {key[0]}:{key[1]}{key[2]}=CYX requires "
+                         "a detected disulfide bond.")
+            continue
+        valid[key] = state
+    return valid
+
+
+def _apply_protonation_overrides(
+    pdb_in: Path, pdb_out: Path, overrides: dict[tuple[str, int, str], str]
+) -> None:
+    st = gemmi.read_structure(str(pdb_in))
+    for chain in st[0]:
+        for res in chain:
+            key = (chain.name, res.seqid.num, res.seqid.icode.strip())
+            if key in overrides:
+                res.name = overrides[key]
+    st.write_minimal_pdb(str(pdb_out))
 
 
 def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Report:
     """Read-only review of the exact chains/options selected for preparation."""
     opts, rep = options or ReceptorOptions(), Report()
     _check_options(opts, rep)
+    if rep.errors:
+        return rep
     st = read_structure(Path(source))
+    _validate_protonation_overrides(st, opts, rep)
     if len(st) > 1:
         rep.warn(f"{len(st)} models present; preparation uses only the first model.")
     available = {ch.name for ch in st[0]}
@@ -292,18 +378,22 @@ class _CollectWarnings(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-def _run_pdb2pqr(pdb_in: Path, pqr_out: Path, pdb_out: Path, ph: float) -> list[str]:
+def _run_pdb2pqr(
+    pdb_in: Path, pqr_out: Path, pdb_out: Path, ph: float, *,
+    titration_state_method: str | None = "propka",
+) -> list[str]:
     from pdb2pqr.main import run_pdb2pqr
 
     collector = _CollectWarnings()
     root = logging.getLogger("pdb2pqr")
     root.addHandler(collector)
     try:
-        run_pdb2pqr([
-            "--ff=AMBER", "--ffout=AMBER", f"--with-ph={ph}",
-            "--titration-state-method=propka", f"--pdb-output={pdb_out}",
-            "--keep-chain", str(pdb_in), str(pqr_out),
-        ])
+        args = ["--ff=AMBER", "--ffout=AMBER", f"--with-ph={ph}",
+                f"--pdb-output={pdb_out}", "--keep-chain"]
+        if titration_state_method:
+            args.append(f"--titration-state-method={titration_state_method}")
+        args.extend([str(pdb_in), str(pqr_out)])
+        run_pdb2pqr(args)
     except SystemExit as exc:
         raise PreparationError(f"PDB2PQR terminated (exit {exc.code})") from exc
     except Exception as exc:  # noqa: BLE001
@@ -332,6 +422,9 @@ def prepare_receptor(
     lig_dir = out_dir / "extracted_ligands"
 
     st = read_structure(Path(source))
+    override_map = _validate_protonation_overrides(st, opts, rep)
+    if rep.errors:
+        raise PreparationError("Invalid receptor preparation options", rep)
     rep.info(f"Read '{Path(source).name}': {len(st)} model(s), "
              f"{len(st[0])} chain(s), {sum(len(c) for c in st[0])} residues.")
 
@@ -473,6 +566,40 @@ def prepare_receptor(
         rep.warn(f"PDB2PQR: {msg}")
 
     after_st = gemmi.read_structure(str(pdb_h))
+    predicted_states = {
+        (p.chain, p.seqid): p.state for p in collect_protonation(after_st)
+    }
+    if override_map:
+        overridden_input = work / "pdb2pqr_overrides.pdb"
+        _apply_protonation_overrides(pdb_h, overridden_input, override_map)
+        override_pqr, override_pdb = work / "pdb2pqr_overrides.pqr", work / "pdb2pqr_overrides_out.pdb"
+        for msg in dict.fromkeys(_run_pdb2pqr(
+            overridden_input, override_pqr, override_pdb, opts.ph, titration_state_method=None
+        )):
+            rep.warn(f"PDB2PQR override pass: {msg}")
+        pdb_h = override_pdb
+        after_st = gemmi.read_structure(str(pdb_h))
+        actual_states = {
+            (chain.name, res.seqid.num, res.seqid.icode.strip()): _residue_state_name(res.name)
+            for chain in after_st[0] for res in chain
+        }
+        for key, expected in override_map.items():
+            actual = actual_states.get(key)
+            if actual != expected:
+                rep.error(f"Protonation override {key[0]}:{key[1]}{key[2]}={expected} "
+                          f"was not applied; final state is {actual or 'missing'}.")
+        if rep.errors:
+            raise PreparationError("Protonation overrides were not applied", rep)
+        for key, expected in override_map.items():
+            predicted = predicted_states.get((key[0], key[1]), "default")
+            charge_note = ""
+            predicted_charge = _STATE_CHARGES.get(predicted, _DEFAULT_CHARGES.get(
+                PROTONATION_STATES.get(predicted, (predicted, "", False))[0], 0))
+            expected_charge = _STATE_CHARGES[expected]
+            if predicted_charge != expected_charge:
+                charge_note = "; formal charge changed"
+            rep.info(f"Protonation override {key[0]}:{key[1]}{key[2]}: "
+                     f"{predicted} -> {expected}{charge_note}.")
     after = _heavy_atom_counts(after_st)
     missing_residues = sorted(set(before) - set(after))
     if missing_residues:
