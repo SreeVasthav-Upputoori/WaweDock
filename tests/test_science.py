@@ -230,17 +230,12 @@ def test_interaction_caveat_is_conservative():
 
 
 # ---------------------------------------------- real-world receptor robustness
-@pytest.mark.parametrize("pdb_name,expect_atoms_above,expect_dropped", [
-    ("1HVR", 1500, True),     # Meeko template mismatch on a residue
-    ("1E66", 4500, True),     # Meeko RuntimeError on a residue with broken alt-conf geometry
+@pytest.mark.parametrize("pdb_name", [
+    "1HVR",     # Meeko template mismatch on a residue
+    "1E66",     # Meeko RuntimeError on a residue with broken alt-conf geometry
 ])
-def test_receptor_preparation_recovers_from_meeko_failures(tmp_path, pdb_name, expect_atoms_above,
-                                                           expect_dropped):
-    """Common real PDBs that fail the strict preparation path must now succeed, with the
-    dropped residues reported."""
-    result = prepare_receptor(DATA / f"{pdb_name}.pdb", tmp_path)
-    assert result.n_atoms > expect_atoms_above
-    text = result.report.render()
-    if expect_dropped:
-        assert "dropped by Meeko" in text or "removed:" in text
-        assert "A from nearest extracted ligand" in text  # distance always reported
+def test_receptor_preparation_rejects_meeko_failures(tmp_path, pdb_name):
+    """Meeko failures must not produce a partial receptor."""
+    with pytest.raises(PreparationError, match="Meeko|Incomplete"):
+        prepare_receptor(DATA / f"{pdb_name}.pdb", tmp_path)
+    assert not (tmp_path / "receptor.pdbqt").exists()

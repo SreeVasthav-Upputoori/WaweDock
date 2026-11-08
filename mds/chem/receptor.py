@@ -454,7 +454,7 @@ def prepare_receptor(
     # -- drop residues PDB2PQR cannot handle (incomplete backbone at chain gaps/ends).
     # Without this, a single stub residue causes "Too few atoms present to reconstruct..."
     # and the whole workflow fails even though the stub is usually far from the binding site.
-    _drop_backbone_stubs(st, hetero, rep)
+    _reject_backbone_stubs(st, rep)
     n_res_in = sum(len(c) for c in st[0])
     if n_res_in == 0:
         raise PreparationError("No protein residues remain after cleaning.", rep)
@@ -473,6 +473,12 @@ def prepare_receptor(
 
     after_st = gemmi.read_structure(str(pdb_h))
     after = _heavy_atom_counts(after_st)
+    missing_residues = sorted(set(before) - set(after))
+    if missing_residues:
+        labels = ", ".join(f"{chain}:{num}" for chain, num, _ in missing_residues)
+        rep.error(f"PDB2PQR removed residue(s) without explicit approval: {labels}. "
+                  "Preparation stopped to prevent a partial receptor.")
+        raise PreparationError("PDB2PQR removed residues", rep)
     rebuilt = {k: after[k] - before[k] for k in before if k in after and after[k] > before[k]}
     for (chain, num, _), n in sorted(rebuilt.items()):
         res_after = next((r for c in after_st[0] if c.name == chain for r in c
@@ -506,22 +512,25 @@ def prepare_receptor(
         lines += [l for l in ion_text.splitlines() if l.startswith("HETATM")]
     prepared.write_text("\n".join(lines) + "\nEND\n")
 
-    # -- Meeko: PDB -> PDBQT.
-    # First attempt is strict. If Meeko refuses because a handful of residues do not match
-    # its templates (common on real PDBs: non-standard C-terminal residues, odd protonation
-    # states, modified residues at chain ends), retry with --allow_bad_res so those residues
-    # are dropped and the rest of the receptor still gets built. Each dropped residue is
-    # named in the report with its distance to the nearest extracted ligand, so the user
-    # can judge whether it affects their binding site.
+    # -- Meeko: PDB -> PDBQT. Parameterization failures are fatal; a partial
+    # receptor is not a valid preparation result.
     pdbqt = out_dir / "receptor.pdbqt"
     code, output = _run_meeko(["--read_pdb", str(prepared), "-p", str(pdbqt)])
     if code != 0 or not pdbqt.exists():
         bad_res = _parse_meeko_bad_residues(output)
         reason = ("template mismatch" if bad_res else
                   _meeko_crash_residue(output))
+        for res_id, dist in _annotate_distances(bad_res, prepared, hetero):
+            dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
+            rep.error(f"Meeko cannot parameterize residue {res_id}{dist_text}; "
+                      "preparation stopped instead of dropping it.")
+        tail = "\n".join(output.strip().splitlines()[-8:])
+        if not bad_res:
+            rep.error(f"Meeko could not build the receptor PDBQT:\n{tail}")
+        raise PreparationError("Meeko receptor preparation failed without residue deletion", rep)
         # Even without a clear residue list we retry once with --allow_bad_res: Meeko sometimes
         # raises an exception on a single oddball residue instead of listing it as a mismatch.
-        if bad_res or reason:
+        if False and (bad_res or reason):
             rep.info("Meeko refused the receptor on the strict first pass; retrying with "
                      "--allow_bad_res to drop problematic residues and keep the rest.")
             for res_id, dist in _annotate_distances(bad_res, prepared, hetero):
@@ -574,17 +583,15 @@ def _minimal_pdb_text(st: gemmi.Structure, scratch: Path) -> str:
 _BACKBONE = ("N", "CA", "C", "O")
 
 
-def _drop_backbone_stubs(st: gemmi.Structure, hetero: list[HeteroResidue], report: Report) -> None:
-    """Drop polymer residues whose backbone is too incomplete for PDB2PQR to handle.
+def _reject_backbone_stubs(st: gemmi.Structure, report: Report) -> None:
+    """Reject polymer residues whose backbone is too incomplete for preparation.
 
     These typically sit at the ragged edges of crystallographic chain gaps or the chain's own
-    terminus. Keeping them makes PDB2PQR fail with "Too few atoms present to reconstruct";
-    dropping just them lets the rest of the receptor through.
+    terminus. Removing them would produce a partial receptor, so preparation must stop.
     """
-    hetero_centroids = _hetero_centroids(hetero)
-    for ch in list(st[0]):
-        to_remove: list[int] = []
-        for i, res in enumerate(ch):
+    incomplete: list[str] = []
+    for ch in st[0]:
+        for res in ch:
             if not _is_polymer_residue(res):
                 continue
             missing = [n for n in _BACKBONE if res.find_atom(n, "*") is None]
@@ -592,19 +599,12 @@ def _drop_backbone_stubs(st: gemmi.Structure, hetero: list[HeteroResidue], repor
             # OXT; only treat it as a stub if N or CA or C are missing.
             if not any(a in missing for a in ("N", "CA", "C")):
                 continue
-            to_remove.append(i)
-            dist = _nearest_hetero_distance(res, hetero_centroids)
-            near = " (NEAR an extracted ligand — may affect your binding site!)" \
-                if dist is not None and dist < 10 else ""
-            dist_text = f", {dist:.1f} A from nearest extracted ligand" if dist is not None else ""
-            report.warn(f"Residue {res.name} {ch.name}:{res.seqid.num} dropped: incomplete "
-                        f"backbone (missing {', '.join(missing)}); PDB2PQR cannot repair it"
-                        f"{dist_text}{near}.")
-        for i in reversed(to_remove):
-            del ch[i]
-    # chains left empty after removing stubs
-    for name in [c.name for c in st[0] if len(c) == 0]:
-        st[0].remove_chain(name)
+            incomplete.append(f"{res.name} {ch.name}:{res.seqid.num} "
+                              f"(missing {', '.join(missing)})")
+    if incomplete:
+        report.error("Incomplete backbone prevents preparation; no residues were removed: "
+                     + ", ".join(incomplete))
+        raise PreparationError("Incomplete protein backbone", report)
 
 
 def _parse_meeko_bad_residues(output: str) -> list[str]:
