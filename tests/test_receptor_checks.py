@@ -5,8 +5,8 @@ import pytest
 from conftest import wait_until
 from mds.chem.receptor import (HeteroResidue, ReceptorOptions, _apply_protonation_overrides,
                                _report_unsupported_cofactors, _select_occupancy_conformers,
-                               _validate_protonation_overrides, inspect_receptor,
-                               prepare_receptor, read_structure)
+                               _validate_protonation_overrides, _validate_retained_metals,
+                               inspect_receptor, prepare_receptor, read_structure)
 from mds.chem.report import PreparationError
 from mds.chem.report import Report
 
@@ -123,6 +123,35 @@ def test_known_cofactors_block_receptor_preparation():
         [HeteroResidue("HEM", "A", 500, 43, "ligand")], report)
     assert report.errors
     assert "cannot be removed safely" in report.errors[0]
+
+
+def test_retained_metal_validation_checks_template_and_coordination():
+    structure = gemmi.Structure()
+    model = gemmi.Model("1")
+    protein = gemmi.Chain("A")
+    residue = gemmi.Residue()
+    residue.name, residue.seqid, residue.het_flag = "ASP", gemmi.SeqId(1, " "), "A"
+    atom = gemmi.Atom()
+    atom.name, atom.element, atom.pos = "OD1", gemmi.Element("O"), gemmi.Position(0, 0, 0)
+    residue.add_atom(atom)
+    protein.add_residue(residue)
+    model.add_chain(protein)
+    structure.add_model(model)
+    ions = gemmi.Structure()
+    ion_model = gemmi.Model("1")
+    ion_chain = gemmi.Chain("A")
+    ion = gemmi.Residue()
+    ion.name, ion.seqid, ion.het_flag = "ZN", gemmi.SeqId(500, " "), "H"
+    atom = gemmi.Atom()
+    atom.name, atom.element, atom.pos = "ZN", gemmi.Element("Zn"), gemmi.Position(2.1, 0, 0)
+    ion.add_atom(atom)
+    ion_chain.add_residue(ion)
+    ion_model.add_chain(ion_chain)
+    ions.add_model(ion_model)
+    report = Report()
+    _validate_retained_metals(structure, ions, report)
+    assert not report.errors
+    assert "oxidation state was not inferred" in report.render()
 
 
 def test_checks_summarize_water_metal_cofactor_and_protonation():

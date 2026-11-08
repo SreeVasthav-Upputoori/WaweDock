@@ -184,6 +184,59 @@ def _report_unsupported_cofactors(hetero: list[HeteroResidue], report: Report) -
                          "Prepare it with a cofactor-capable workflow instead.")
 
 
+def _validate_retained_metals(
+    st: gemmi.Structure, kept_ions: gemmi.Structure, report: Report
+) -> None:
+    """Validate retained metal records without guessing oxidation states."""
+    for chain in kept_ions[0]:
+        for residue in chain:
+            if residue.name not in SUPPORTED_METALS:
+                report.error(f"Retained ion {residue.name} {chain.name}:{residue.seqid.num} "
+                             "has no supported metal template.")
+                continue
+            if len(residue) != 1:
+                report.error(f"Metal {residue.name} {chain.name}:{residue.seqid.num} must "
+                             "contain exactly one atom.")
+                continue
+            atom = residue[0]
+            if atom.element.name.upper() not in {"ZN", "MG", "CA", "MN", "FE", "CU"}:
+                report.error(f"Metal {residue.name} {chain.name}:{residue.seqid.num} has "
+                             f"inconsistent element {atom.element.name}.")
+            if not all(math.isfinite(value) for value in (atom.pos.x, atom.pos.y, atom.pos.z)):
+                report.error(f"Metal {residue.name} {chain.name}:{residue.seqid.num} has "
+                             "non-finite coordinates.")
+            nearby = sum(
+                1 for protein_chain in st[0] for protein_residue in protein_chain
+                for protein_atom in protein_residue
+                if protein_atom.element.name.upper() in {"N", "O", "S"}
+                and protein_atom.pos.dist(atom.pos) <= 3.0
+            )
+            if nearby == 0:
+                report.warn(f"Metal {residue.name} {chain.name}:{residue.seqid.num} has no "
+                            "nearby N/O/S donor atom within 3.0 Angstrom; review whether "
+                            "retaining this isolated ion is chemically justified.")
+            report.info(f"Metal {residue.name} {chain.name}:{residue.seqid.num}: oxidation "
+                        "state was not inferred; docking uses the bundled atom template.")
+
+
+def _validate_prepared_metal_records(path: Path, kept_ions: gemmi.Structure, report: Report) -> None:
+    records = path.read_text().splitlines()
+    for chain in kept_ions[0]:
+        for residue in chain:
+            matches = [
+                line for line in records
+                if line.startswith("HETATM")
+                and line[17:20].strip() == residue.name
+                and line[21].strip() == chain.name.strip()
+                and line[22:26].strip() == str(residue.seqid.num)
+            ]
+            if len(matches) != 1:
+                report.error(f"Prepared receptor contains {len(matches)} records for metal "
+                             f"{residue.name} {chain.name}:{residue.seqid.num}; expected one.")
+    if report.errors:
+        raise PreparationError("Retained metal records are invalid", report)
+
+
 def find_chain_breaks(st: gemmi.Structure) -> list[str]:
     """Describe gaps where consecutive residues are not covalently connected."""
     breaks = []
@@ -551,6 +604,9 @@ def prepare_receptor(
                  "oxygen-only HETATM records; validate their structural and electrostatic "
                  "role before docking.")
     kept_ions.add_model(kept_model)
+    _validate_retained_metals(st, kept_ions, rep)
+    if rep.errors:
+        raise PreparationError("Invalid retained metal records", rep)
 
     # -- drop chains left empty
     for name in [c.name for c in st[0] if len(c) == 0]:
@@ -657,6 +713,7 @@ def prepare_receptor(
         ion_text = _minimal_pdb_text(kept_ions, work / "ions.pdb")
         lines += [l for l in ion_text.splitlines() if l.startswith("HETATM")]
     prepared.write_text("\n".join(lines) + "\nEND\n")
+    _validate_prepared_metal_records(prepared, kept_ions, rep)
 
     # -- Meeko: PDB -> PDBQT. Parameterization failures are fatal; a partial
     # receptor is not a valid preparation result.
