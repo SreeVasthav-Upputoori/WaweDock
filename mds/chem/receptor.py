@@ -216,7 +216,7 @@ def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Re
         alternatives = sorted({a.altloc for a in residue if a.altloc != "\0"})
         if alternatives:
             rep.warn(f"Alternate conformations at {label}: {', '.join(alternatives)}. "
-                     "Preparation keeps the first conformer, not an occupancy-weighted choice.")
+                     "Preparation selects the highest-occupancy conformer per residue.")
     for line in find_chain_breaks(st):
         rep.warn(f"Chain break: {line}. Missing segments are not rebuilt.")
     hetero = classify_hetero(st)
@@ -344,9 +344,10 @@ def prepare_receptor(
     # -- alternate conformations
     n_alt = sum(1 for ch in st[0] for r in ch for a in r if a.altloc != "\0")
     if n_alt:
-        st.remove_alternative_conformations()
-        rep.warn(f"{n_alt} atoms had alternate conformations; the first conformer of each was "
-                 "kept (occupancy-weighted choice is not applied).")
+        selected = _select_occupancy_conformers(st)
+        rep.warn(f"{n_alt} atoms had alternate conformations; selected the highest-occupancy "
+                 f"conformer per residue ({selected} residue(s)). Ties prefer conformer A, "
+                 "then lexical order.")
 
     # -- chain selection
     if opts.chains:
@@ -577,6 +578,29 @@ def prepare_receptor(
 def _minimal_pdb_text(st: gemmi.Structure, scratch: Path) -> str:
     st.write_minimal_pdb(str(scratch))
     return scratch.read_text()
+
+
+def _select_occupancy_conformers(st: gemmi.Structure) -> int:
+    """Keep blank atoms and the highest-mean-occupancy conformer per residue."""
+    selected_count = 0
+    for chain in st[0]:
+        for residue in chain:
+            altlocs = sorted({atom.altloc for atom in residue if atom.altloc not in ("\0", " ")})
+            if not altlocs:
+                continue
+            scores = {
+                altloc: sum(atom.occ for atom in residue if atom.altloc == altloc)
+                / sum(1 for atom in residue if atom.altloc == altloc)
+                for altloc in altlocs
+            }
+            chosen = max(altlocs, key=lambda altloc: (scores[altloc], altloc == "A", altloc))
+            for index in reversed(range(len(residue))):
+                if residue[index].altloc not in ("\0", " ", chosen):
+                    del residue[index]
+            for atom in residue:
+                atom.altloc = "\0"
+            selected_count += 1
+    return selected_count
 
 
 # Backbone atom names required by PDB2PQR to keep (or reconstruct a cap for) a residue.

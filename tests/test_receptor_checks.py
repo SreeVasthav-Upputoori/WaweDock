@@ -3,7 +3,8 @@ from pathlib import Path
 import gemmi
 import pytest
 from conftest import wait_until
-from mds.chem.receptor import ReceptorOptions, inspect_receptor, prepare_receptor
+from mds.chem.receptor import (ReceptorOptions, _select_occupancy_conformers,
+                               inspect_receptor, prepare_receptor, read_structure)
 from mds.chem.report import PreparationError
 
 DATA = Path(__file__).parent / "data"
@@ -50,6 +51,15 @@ def test_checks_report_backbone_alternates_and_gaps_without_modifying_input(inco
     assert incomplete_structure.read_bytes() == before
     assert not list(incomplete_structure.parent.glob('work'))
     assert not inspect_receptor(incomplete_structure, ReceptorOptions(chains=["B"])).warnings
+
+
+def test_preparation_selects_highest_occupancy_conformer(incomplete_structure):
+    structure = read_structure(incomplete_structure)
+    assert _select_occupancy_conformers(structure) == 1
+    ca_atoms = [atom for atom in structure[0][0][0] if atom.name == "CA"]
+    assert len(ca_atoms) == 1
+    assert ca_atoms[0].altloc in ("\0", " ")
+    assert ca_atoms[0].occ == pytest.approx(1.0)
 
 
 def test_checks_summarize_water_metal_cofactor_and_protonation():
