@@ -40,6 +40,10 @@ WATERS = frozenset({"HOH", "DOD", "WAT", "H2O"})
 # Metal ions that Meeko has atom-type templates for (alias -> template name).
 SUPPORTED_METALS = {"ZN": "ZN", "MG": "MG", "CA": "CA", "MN": "MN", "FE": "FE",
                     "FE2": "FE", "CU": "CU", "CU1": "CU"}
+KNOWN_COFACTORS = frozenset({
+    "ADP", "ATP", "COA", "FAD", "FMN", "GTP", "GDP", "HEM", "NAD", "NAP",
+    "NDP", "PLP", "SAM", "SAH", "TPP",
+})
 
 _meeko_lock = threading.Lock()  # Meeko's CLI reads sys.argv, so serialise calls.
 
@@ -170,6 +174,14 @@ def classify_hetero(st: gemmi.Structure) -> list[HeteroResidue]:
                 kind = "ligand"
             out.append(HeteroResidue(res.name, ch.name, res.seqid.num, len(res), kind))
     return out
+
+
+def _report_unsupported_cofactors(hetero: list[HeteroResidue], report: Report) -> None:
+    for item in hetero:
+        if item.kind == "ligand" and item.name in KNOWN_COFACTORS:
+            report.error(f"Recognized cofactor {item.label} cannot be removed safely: "
+                         "cofactor parameterisation is not supported. "
+                         "Prepare it with a cofactor-capable workflow instead.")
 
 
 def find_chain_breaks(st: gemmi.Structure) -> list[str]:
@@ -306,6 +318,9 @@ def inspect_receptor(source: Path, options: ReceptorOptions | None = None) -> Re
     for line in find_chain_breaks(st):
         rep.warn(f"Chain break: {line}. Missing segments are not rebuilt.")
     hetero = classify_hetero(st)
+    _report_unsupported_cofactors(hetero, rep)
+    if rep.errors:
+        return rep
     waters = sum(h.kind == "water" for h in hetero)
     if opts.retain_binding_site_waters:
         rep.info(f"Waters: {waters}; waters within {opts.water_cutoff:g} Angstrom of an "
@@ -466,6 +481,9 @@ def prepare_receptor(
 
     # -- hetero residues
     hetero = classify_hetero(st)
+    _report_unsupported_cofactors(hetero, rep)
+    if rep.errors:
+        raise PreparationError("Unsupported cofactor in receptor", rep)
     kept_ions = gemmi.Structure()
     kept_model = gemmi.Model("1")
     water_count = 0

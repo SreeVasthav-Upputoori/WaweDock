@@ -66,7 +66,9 @@ metal retention, excluded hetero groups/cofactors and the selected protonation p
 Open **Window > Panels > Preparation Report** for full details. Changing preparation
 options clears the previous check summary. The check does not rebuild atoms or
 predict pKa; review the prepared receptor as well. Explicit-water retention is not
-yet supported and is now rejected rather than silently ignored.
+yet supported and is now rejected rather than silently ignored. Recognized cofactors
+such as heme, NAD and FAD are rejected rather than silently removed because this
+workflow does not parameterize their binding-site chemistry.
 
 ## Docking-box preview
 

@@ -3,9 +3,10 @@ from pathlib import Path
 import gemmi
 import pytest
 from conftest import wait_until
-from mds.chem.receptor import (ReceptorOptions, _apply_protonation_overrides,
-                               _select_occupancy_conformers, _validate_protonation_overrides,
-                               inspect_receptor, prepare_receptor, read_structure)
+from mds.chem.receptor import (HeteroResidue, ReceptorOptions, _apply_protonation_overrides,
+                               _report_unsupported_cofactors, _select_occupancy_conformers,
+                               _validate_protonation_overrides, inspect_receptor,
+                               prepare_receptor, read_structure)
 from mds.chem.report import PreparationError
 from mds.chem.report import Report
 
@@ -114,6 +115,14 @@ def test_protonation_override_rewrites_only_selected_residue(tmp_path):
     changed = read_structure(target)
     assert changed[0]["A"][0].name == "HIE"
     assert changed[0]["A"][1].name == "ASP"
+
+
+def test_known_cofactors_block_receptor_preparation():
+    report = Report()
+    _report_unsupported_cofactors(
+        [HeteroResidue("HEM", "A", 500, 43, "ligand")], report)
+    assert report.errors
+    assert "cannot be removed safely" in report.errors[0]
 
 
 def test_checks_summarize_water_metal_cofactor_and_protonation():
