@@ -53,7 +53,7 @@ class DockingPanel(QScrollArea):
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         body = QWidget()
         lay = QVBoxLayout(body)
-        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setContentsMargins(0, 8, 0, 8)
         lay.setSpacing(6)
         for index, page in enumerate((self._receptor_group(), self._ligand_group(),
                                       self._site_group(), self._docking_group(), self._results_group())):
