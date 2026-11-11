@@ -148,6 +148,7 @@ class InteractionsPanel(QWidget):
 class ResultsPanel(QWidget):
     pose_cleared = Signal()
     pose_selected = Signal(object, int)         # LigandOutcome, pose index
+    review_focus_changed = Signal(bool)
 
     def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -231,6 +232,12 @@ class ResultsPanel(QWidget):
             export_menu.addAction(text, lambda _on=False, f=fmt: self._export(f))
         self.export_button.setMenu(export_menu)
         self.export_button.setToolTip("Export all results, including poses hidden by search.")
+        self.focus_review = QToolButton()
+        self.focus_review.setText("Focus review")
+        self.focus_review.setCheckable(True)
+        self.focus_review.setToolTip("Hide analysis tabs while browsing individual poses. "
+                                     "The viewer and pose list get the available space.")
+        self.focus_review.toggled.connect(self._set_review_focus)
         open_btn = QToolButton()
         open_btn.setText("Run Folder")
         open_btn.clicked.connect(self._open_folder)
@@ -238,6 +245,7 @@ class ResultsPanel(QWidget):
         buttons.setSpacing(4)
         buttons.addWidget(self.search, 1)
         buttons.addWidget(self.match_count)
+        buttons.addWidget(self.focus_review)
         buttons.addWidget(self.export_button)
         buttons.addWidget(open_btn)
 
@@ -250,6 +258,11 @@ class ResultsPanel(QWidget):
         layout.addWidget(self.splitter, 1)
         layout.addWidget(CaveatBar(SCORE_DISCLAIMER))
         controller.docking_finished.connect(self.show_outcomes)
+
+    def _set_review_focus(self, focused: bool) -> None:
+        self.analysis_tabs.setVisible(not focused)
+        self.focus_review.setText("Show analysis" if focused else "Focus review")
+        self.review_focus_changed.emit(focused)
 
     def show_outcomes(self, outcomes: list[LigandOutcome]) -> None:
         blocker = QSignalBlocker(self.table)
