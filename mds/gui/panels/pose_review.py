@@ -37,9 +37,10 @@ class PoseReviewBar(QWidget):
         self.reference.setMinimumContentsLength(10)
         self.reference.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.reference.setToolTip("Choose the reference ligand to keep visible while browsing.")
-        self.reference_label = QLabel("Reference:")
+        self.reference_label = QLabel("Reference compound:")
         self.reference_label.setBuddy(self.reference)
-        self.lock_reference = QCheckBox("Lock")
+        self.lock_reference = QCheckBox("Lock reference")
+        self.lock_reference.setObjectName("lockReference")
         self.lock_reference.setToolTip(LOCK_TIP)
 
         self.display = QToolButton()
@@ -101,6 +102,7 @@ class PoseReviewBar(QWidget):
             button.click()
 
     def _lock_changed(self, on):
+        self.lock_reference.setText("Reference locked" if on else "Lock reference")
         if on:
             self.keep_camera.setChecked(True)
         self.keep_camera.setEnabled(not on)
@@ -121,6 +123,9 @@ class PoseReviewBar(QWidget):
         self.reference_label.setEnabled(bool(names))
         if not names:
             self.lock_reference.setChecked(False)
+        else:
+            self.lock_reference.setText("Reference locked"
+                                        if self.lock_reference.isChecked() else "Lock reference")
         self.hint.setVisible(not names)
         self.settings_changed.emit()
 
