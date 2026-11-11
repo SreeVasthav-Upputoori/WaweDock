@@ -52,6 +52,7 @@ def test_review_bar_navigation_and_lock_state(qapp):
         bar.set_references(['reference'])
         bar.keep_camera.setChecked(False)
         bar.lock_reference.setChecked(True)
+        assert bar.lock_reference.text() == 'Reference locked'
         assert bar.keep_camera.isChecked() and not bar.keep_camera.isEnabled()
         bar.set_position(0,6)
         assert not bar.previous.isEnabled() and bar.next.isEnabled()
@@ -62,6 +63,7 @@ def test_review_bar_navigation_and_lock_state(qapp):
         assert steps==[1,-1]
         bar.set_references([])
         assert not bar.lock_reference.isChecked() and bar.keep_camera.isEnabled()
+        assert bar.lock_reference.text() == 'Lock reference'
     finally:
         bar.close()
 
