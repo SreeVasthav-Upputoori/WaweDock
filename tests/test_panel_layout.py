@@ -73,6 +73,15 @@ def test_display_toggles_are_in_the_menu_and_still_drive_the_viewer(qapp):
         bar.close()
 
 
+def test_results_focus_review_hides_analysis_chrome(results):
+    results.focus_review.setChecked(True)
+    assert results.analysis_tabs.isHidden()
+    assert results.focus_review.text() == "Show analysis"
+    results.focus_review.setChecked(False)
+    assert not results.analysis_tabs.isHidden()
+    assert results.focus_review.text() == "Focus review"
+
+
 @pytest.fixture
 def results(qapp, tmp_path):
     from mds.gui.controller import Controller
