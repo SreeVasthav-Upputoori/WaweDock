@@ -104,6 +104,7 @@ class DockingPanel(QScrollArea):
         c.docking_finished.connect(self._on_docking_finished)
         c.runner.job_cancelled.connect(lambda _i: self._on_job_stopped("Cancelled"))
         c.runner.job_failed.connect(lambda _i, _t: self._on_job_stopped("Failed"))
+        c.preparation_failed.connect(self._preparation_failed)
         for signal in (c.receptor_prepared, c.ligands_changed, c.ligands_prepared,
                        c.box_changed, c.docking_finished):
             signal.connect(self._refresh_steps)
@@ -281,6 +282,12 @@ class DockingPanel(QScrollArea):
         self.rec_status.setText(f"✔ Prepared: {result.n_atoms} atoms, {w} warning(s). See the "
                                 "Preparation Report tab.")
 
+    def _preparation_failed(self, kind: str, _message: str) -> None:
+        if kind == "receptor":
+            self.rec_status.setText("Preparation failed. Open Preparation Report or Log for details.")
+        elif kind == "ligands":
+            self.lig_status.setText("Preparation failed. Open Preparation Report or Log for details.")
+
     # ------------------------------------------------------------- 2. ligands
     def _ligand_group(self) -> QGroupBox:
         g = QGroupBox("2  Ligands")
@@ -320,6 +327,9 @@ class DockingPanel(QScrollArea):
         self.prep_lig_btn = QPushButton("Prepare Ligands")
         self.prep_lig_btn.clicked.connect(self._prepare_ligands)
         v.addWidget(self.prep_lig_btn)
+        self.lig_status = QLabel("")
+        self.lig_status.setWordWrap(True)
+        v.addWidget(self.lig_status)
         return g
 
     def _add_smiles(self) -> None:
