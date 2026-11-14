@@ -63,6 +63,7 @@ class Controller(QObject):
     receptor_prepared = Signal(object)          # ReceptorResult
     ligands_changed = Signal()
     ligands_prepared = Signal(object)           # LigandPrepOutcome
+    preparation_failed = Signal(str, str)        # kind, message
     box_changed = Signal(object)                # DockingBox | None
     reference_changed = Signal(str)             # name or ""
     docking_started = Signal()
@@ -102,6 +103,8 @@ class Controller(QObject):
         self.run_dir: Path | None = None
         self._callbacks: dict[int, Callable[[object], None]] = {}
         self._docking_job: int | None = None
+        self._receptor_prep_job: int | None = None
+        self._ligand_prep_job: int | None = None
         self._receptor_check_job: int | None = None
         self._interaction_job: int | None = None
         self._consistency_job: int | None = None
@@ -169,9 +172,20 @@ class Controller(QObject):
             self._chemistry_checked(ChemistryStatus(False,'Chemistry check failed: '+(tb.strip().splitlines()[-1] if tb.strip() else 'unknown error')))
             return
         self._finish_receptor_check(job_id)
+        job_name = self.runner.name(job_id)
+        last_lines = [line.strip() for line in tb.splitlines() if line.strip()]
+        detail = "\n".join(last_lines[-4:]) if last_lines else "Unknown error"
+        if job_id == self._receptor_prep_job:
+            self._receptor_prep_job = None
+            self.report.emit("Receptor preparation failed", detail)
+            self.preparation_failed.emit("receptor", detail)
+        if job_id == self._ligand_prep_job:
+            self._ligand_prep_job = None
+            self.report.emit("Ligand preparation failed", detail)
+            self.preparation_failed.emit("ligands", detail)
         if self._callbacks.pop(job_id, None) is None:
             return
-        last = tb.strip().splitlines()[-1] if tb.strip() else "unknown error"
+        last = detail
         if job_id == self._docking_job:
             self._docking_job = None
         if job_id == self._consistency_job:
@@ -286,10 +300,12 @@ class Controller(QObject):
         project = self.ensure_project()
         out = project.prepared_dir("receptor")
         source = self.source_pdb
-        self._submit(PrepareReceptorJob(source, out, options),
-                     lambda result: self._receptor_done(result) if self.source_pdb == source else None)
+        self._receptor_prep_job = self._submit(
+            PrepareReceptorJob(source, out, options),
+            lambda result: self._receptor_done(result) if self.source_pdb == source else None)
 
     def _receptor_done(self, result: ReceptorResult) -> None:
+        self._receptor_prep_job = None
         self._contact_queue.clear()
         self._cached_protein_rdkit = None
         self.receptor = result
@@ -349,10 +365,12 @@ class Controller(QObject):
             return
         self.ligand_options = {"ionize": ionize, "n_conformers": n_conformers, "seed": seed}
         out = self.ensure_project().prepared_dir("ligands")
-        self._submit(PrepareLigandsJob(list(self.entries), out, seed=seed, n_conformers=n_conformers,
-                                       ionize=ionize), self._ligands_done)
+        self._ligand_prep_job = self._submit(
+            PrepareLigandsJob(list(self.entries), out, seed=seed, n_conformers=n_conformers,
+                              ionize=ionize), self._ligands_done)
 
     def _ligands_done(self, outcome: LigandPrepOutcome) -> None:
+        self._ligand_prep_job = None
         self.prepared = outcome.prepared
         lines = []
         for lig in outcome.prepared:
