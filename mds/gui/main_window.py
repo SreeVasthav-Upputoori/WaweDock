@@ -128,7 +128,9 @@ class MainWindow(QMainWindow):
         log.info("%s %s started", APP_NAME, __version__)
 
     def _chemistry_availability(self,status):
-        available=bool(status is not None and status.available)
+        # Keep controls usable while the startup capability probe is running; the
+        # probe will disable them explicitly if the chemistry backend is unavailable.
+        available = status is None or status.available
         if status is None:
             text='Checking available ligand and docking tools...'
         elif 'protein tools only' in status.reason:
@@ -154,7 +156,7 @@ class MainWindow(QMainWindow):
         if index == 2:
             if previous != 2 and not self._restoring_workspace:
                 self._modeling_state = self.saveState(LAYOUT_VERSION)
-            for dock in (self.dock_docking, self.dock_selection, self.dock_properties, self.dock_health,
+            for dock in (self.dock_project, self.dock_docking, self.dock_selection, self.dock_properties, self.dock_health,
                          self.dock_report, self.dock_log, self.dock_jobs):
                 dock.hide()
         elif not self._restoring_workspace:
@@ -167,13 +169,14 @@ class MainWindow(QMainWindow):
             elif index == 1 and current not in (2, 3, 4):
                 self.docking_panel.show_step(3)
             if self._focus_state is None:
+                self.dock_project.show()
                 self.dock_docking.show()
         self._workspace_mode = index
 
     def _activate_docking_step(self, index: int) -> None:
         if not self._restoring_workspace:
             self.workspace.select(0 if index < 2 else 1)
-        if self._focus_state is None and not self._restoring_workspace:
+        if not self._restoring_workspace:
             self.dock_docking.show()
             self.dock_docking.raise_()
 
@@ -332,13 +335,13 @@ class MainWindow(QMainWindow):
         # Build
         a.add("build.from_smiles", "Ligand from &SMILES…", slot=lambda: self.docking_panel._add_smiles())
         # Prepare
-        a.add("prepare.protein", "Prepare &Protein", slot=lambda: self.docking_panel._prepare_receptor(),
+        a.add("prepare.protein", "Prepare &Protein", slot=lambda: self._run_docking_step(0, self.docking_panel._prepare_receptor),
               tip="Receptor preparation workflow")
-        a.add("prepare.ligands", "Prepare &Ligands", slot=lambda: self.docking_panel._prepare_ligands(),
+        a.add("prepare.ligands", "Prepare &Ligands", slot=lambda: self._run_docking_step(1, self.docking_panel._prepare_ligands),
               tip="Ligand preparation workflow")
         # Docking
         a.add("docking.box", "Define Docking &Box", slot=self._focus_site)
-        a.add("docking.run", "&Run Docking (AutoDock Vina)", slot=lambda: self.docking_panel._run(), shortcut="F5")
+        a.add("docking.run", "&Run Docking (AutoDock Vina)", slot=lambda: self._run_docking_step(3, self.docking_panel._run), shortcut="F5")
         a.add("docking.cancel", "&Cancel Docking", slot=c.cancel_docking)
         a.add("docking.screen", "&Virtual Screening queue / resume…", planned_phase=9,
               tip="Importing several ligands already docks them as a batch")
@@ -993,9 +996,21 @@ class MainWindow(QMainWindow):
 
     def _focus_site(self) -> None:
         self.docking_panel.show_step(2)
-        self.dock_docking.show()
+        self._show_docking_dock()
         self.dock_docking.raise_()
         self.docking_panel.site_method.setFocus()
+
+    def _run_docking_step(self, step: int, action) -> None:
+        self.workspace.select(0 if step < 2 else 1)
+        self._show_docking_dock()
+        self.dock_docking.raise_()
+        self.docking_panel.show_step(step)
+        action()
+
+    def _show_docking_dock(self) -> None:
+        if self.dock_docking.isHidden():
+            self.dock_docking.toggleViewAction().trigger()
+        self.dock_docking.setVisible(True)
 
     # ---- analysis
     def _show_descriptors(self) -> None:
