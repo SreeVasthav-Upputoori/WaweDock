@@ -49,6 +49,24 @@ def test_default_workspace_prioritises_viewer(window):
     assert len(window.findChildren(QToolBar)) == 1
 
 
+def test_workspaces_explain_the_current_stage_and_reduce_results_clutter(window):
+    assert window.workspace.stage_title.text() == "1  Prepare"
+    assert "prepare the receptor" in window.workspace.stage_description.text()
+    window.workspace.select(2)
+    assert window.workspace.stage_title.text() == "3  Review"
+    assert "locked reference" in window.workspace.stage_description.text()
+    assert window.dock_project.isHidden()
+    window.workspace.select(0)
+    assert not window.dock_project.isHidden()
+
+
+def test_workspace_has_one_clear_navigation_bar(window):
+    assert [window.workspace.tabs.tabText(i) for i in range(3)] == [
+        "1  Prepare", "2  Dock", "3  Review"
+    ]
+    assert not window.findChild(type(window.workspace.stage_title), "commandSearch")
+
+
 def test_molecular_fullscreen_restores_panels_and_maximised_window(window):
     window.showMaximized()
     window.dock_selection.show()
