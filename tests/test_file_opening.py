@@ -3,6 +3,8 @@ from pathlib import Path
 import shutil
 
 import pytest
+from PySide6.QtWidgets import QFileDialog
+
 Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 from mds.gui.main_window import MainWindow
 from mds.project import Project
@@ -39,5 +41,25 @@ def test_open_files_reports_missing_and_unsupported_files(qapp, settings, tmp_pa
         assert "File not found" in errors[0][1]
         assert "Unsupported file type" in errors[1][1]
         assert window.controller.project is None
+    finally:
+        window.close()
+
+
+def test_save_as_reloads_state_from_the_copy(qapp, settings, tmp_path, monkeypatch):
+    window = MainWindow(settings, use_viewer=False)
+    original = Project.create(tmp_path / "original")
+    window.controller.set_project(original)
+    source = original.import_original(Path(__file__).parent / "data" / "3PTB.pdb")
+    window.controller.source_pdb = source
+    copy_root = tmp_path / "copy"
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(copy_root))
+
+    try:
+        window._save_project_as()
+
+        assert window.controller.project.root == copy_root
+        assert window.controller.source_pdb == copy_root / "originals" / "3PTB.pdb"
+        assert window.controller.source_pdb.is_file()
+        assert window.controller.project.state["source_structure"] == "originals/3PTB.pdb"
     finally:
         window.close()
