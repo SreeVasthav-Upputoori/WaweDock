@@ -945,12 +945,16 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Choose an empty folder for the copy", self._start_dir())
         if path:
             try:
+                self.controller.save_project()
                 copy = self.controller.project.duplicate(Path(path))
             except FileExistsError as exc:
                 QMessageBox.warning(self, "Save As", str(exc))
                 return
-            self.controller.save_project()
+            self._reset_workspace()
             self.controller.set_project(copy)
+            self.controller.load_project_state()
+            self.docking_panel.apply_params(self.controller.params)
+            self.status.showMessage(f"Saved project copy: {copy.root}", 6000)
 
     def _archive_project(self) -> None:
         if self.controller.project is None:
