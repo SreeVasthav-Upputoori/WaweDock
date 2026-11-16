@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 
 import pytest
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 Chem = pytest.importorskip("rdkit.Chem", reason="Requires the optional RDKit backend", exc_type=ImportError)
 from mds.gui.main_window import MainWindow
@@ -61,5 +61,32 @@ def test_save_as_reloads_state_from_the_copy(qapp, settings, tmp_path, monkeypat
         assert window.controller.source_pdb == copy_root / "originals" / "3PTB.pdb"
         assert window.controller.source_pdb.is_file()
         assert window.controller.project.state["source_structure"] == "originals/3PTB.pdb"
+    finally:
+        window.close()
+
+
+def test_project_switch_can_be_cancelled_without_saving(qapp, settings, tmp_path, monkeypatch):
+    window = MainWindow(settings, use_viewer=False)
+    project = Project.create(tmp_path / "current")
+    window.controller.set_project(project)
+    save_called = False
+
+    def save_project():
+        nonlocal save_called
+        save_called = True
+
+    monkeypatch.setattr(window.controller, "save_project", save_project)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args: QMessageBox.StandardButton.Cancel,
+    )
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path / "new"))
+
+    try:
+        window._new_project()
+
+        assert window.controller.project is project
+        assert not save_called
     finally:
         window.close()
