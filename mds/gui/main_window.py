@@ -896,6 +896,8 @@ class MainWindow(QMainWindow):
         if (root / "project.json").exists():
             QMessageBox.warning(self, "New Project", "That folder already contains a project; use Open Project.")
             return
+        if not self._confirm_project_switch("create a new project"):
+            return
         self._reset_workspace()
         self.controller.new_project(root)
         self.status.showMessage(f"Project created: {root}", 6000)
@@ -908,6 +910,8 @@ class MainWindow(QMainWindow):
             project = Project.open(Path(path))
         except (FileNotFoundError, ValueError) as exc:
             QMessageBox.warning(self, "Open Project", str(exc))
+            return
+        if not self._confirm_project_switch("open another project"):
             return
         self._reset_workspace()
         self.controller.set_project(project)
@@ -938,6 +942,28 @@ class MainWindow(QMainWindow):
         self.controller.ensure_project()
         self.controller.save_project()
         self.status.showMessage(f"Project saved: {self.controller.project.root}", 5000)
+
+    def _confirm_project_switch(self, operation: str) -> bool:
+        if self.controller.project is None:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Current Project",
+            f"Save the current project before you {operation}?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Save:
+            try:
+                self.controller.save_project()
+            except OSError as exc:
+                QMessageBox.warning(self, "Save Project", f"Could not save the current project: {exc}")
+                return False
+        return True
 
     def _save_project_as(self) -> None:
         if self.controller.project is None:
