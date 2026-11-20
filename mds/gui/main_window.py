@@ -265,7 +265,7 @@ class MainWindow(QMainWindow):
         self.dock_selection = self._add_dock(self.selection_panel, "Selection & Cleanup", "dockSelection", left)
         self.dock_docking = self._add_dock(self.docking_panel, "Docking Setup", "dockDocking", right)
         self.health_panel = ProteinHealthPanel(self.controller)
-        self.dock_health = self._add_dock(self.health_panel, "Protein Health & Repair", "dockProteinHealth", right)
+        self.dock_health = self._add_dock(self.health_panel, "Prepare Receptor — Diagnostics", "dockProteinHealth", right)
         # Keep diagnostic controls readable when this dock is first opened.
         self.dock_health.setMinimumWidth(360)
         self.dock_properties = self._add_dock(self.properties, "Properties", "dockProperties", right)
@@ -312,6 +312,8 @@ class MainWindow(QMainWindow):
         a.add("edit.undo", "Undo Structure Edit", slot=c.undo_structure_edit, shortcut=sk.Undo)
         a.add("edit.redo", "Redo Structure Edit", slot=c.redo_structure_edit, shortcut=sk.Redo)
         a.add("edit.delete", "Delete Selected Atoms", slot=c.delete_selected_residues)
+        a.add("edit.show_structure", "Show Editable Structure", slot=self._show_editing_structure,
+              tip="Open the imported structure for contextual selection and editing.")
         a["edit.undo"].setEnabled(False)
         a["edit.redo"].setEnabled(False)
         a.add("edit.select_around", "Show Residues Around Ligand…", slot=self._select_around)
@@ -376,7 +378,7 @@ class MainWindow(QMainWindow):
         menu("&File", ["file.new", "file.open", "file.save", "file.save_as", "file.archive", None,
                        "file.open_structure", "file.fetch_pdb", "file.import_ligands", "file.export_image", None,
                        "file.exit"])
-        menu("&Edit", ["edit.undo", "edit.redo", "edit.delete", None,
+        menu("&Edit", ["edit.undo", "edit.redo", "edit.delete", "edit.show_structure", None,
                        "edit.select_around", "edit.clear_selection"])
         m = mb.addMenu("&View")
         theme_menu = m.addMenu("&Theme")
@@ -638,6 +640,8 @@ class MainWindow(QMainWindow):
                 self.viewer.replace_structure(previous_name, name, text, fmt, atom_records(st))
             else:
                 self.viewer.add_object(name, text, fmt, "protein", atom_records(st), preserve_view)
+            if not preserve_view:
+                self.viewer.zoom_to(name)
         if self.viewer:
             from mds.chem.repair import reconstructed_atom_indices
             reconstructed=reconstructed_atom_indices(Path(path),atom_records(st))
@@ -1072,7 +1076,8 @@ class MainWindow(QMainWindow):
                                     "then select a pose in the Results panel.")
             return
         self.workspace.select(2)
-        self.results_panel.analysis_tabs.setCurrentWidget(self.results_panel.interactions_panel)
+        self.results_panel.analysis_tabs.setCurrentWidget(self.results_panel.interaction_tabs)
+        self.results_panel.interaction_tabs.setCurrentWidget(self.results_panel.interactions_panel)
         self.results_panel.interactions_panel._analyse()
 
     def _show_similarity(self) -> None:
