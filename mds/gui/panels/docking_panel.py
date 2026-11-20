@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSpinBox,
-                               QSizePolicy, QStyle, QVBoxLayout, QWidget)
+                               QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWidget)
 
 from mds.chem.box import DockingBox
 from mds.chem.ligand import SUPPORTED_SUFFIXES
@@ -128,6 +128,26 @@ class DockingPanel(QScrollArea):
             self.ensureWidgetVisible(self.step_buttons[index])
             self.step_activated.emit(index)
 
+    def _advanced_section(self, title: str, content: QWidget) -> QWidget:
+        """Return a compact disclosure section for expert-only parameters."""
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(2)
+        button = QToolButton()
+        button.setText(title)
+        button.setCheckable(True)
+        button.setChecked(False)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setArrowType(Qt.ArrowType.RightArrow)
+        button.toggled.connect(content.setVisible)
+        button.toggled.connect(lambda on: button.setArrowType(
+            Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow))
+        content.setVisible(False)
+        layout.addWidget(button)
+        layout.addWidget(content)
+        return wrapper
+
     def _results_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QVBoxLayout(group)
@@ -178,6 +198,7 @@ class DockingPanel(QScrollArea):
             missing.append("define a valid docking box")
         self.run_readiness.setText("Before docking: " + "; ".join(missing) + "."
                                    if missing else "Ready to dock with the current project inputs.")
+        self.run_btn.setEnabled(not self._running and not missing)
 
     def _on_project_changed(self) -> None:
         self.rec_check.clear()
@@ -211,7 +232,7 @@ class DockingPanel(QScrollArea):
         self.water_cutoff.setEnabled(False)
         self.retain_waters.toggled.connect(self.water_cutoff.setEnabled)
         self.ph = _spin(4.0, 10.0, 7.4, 0.1)
-        self.check_rec_btn = QPushButton("Check Receptor")
+        self.check_rec_btn = QPushButton("Validate only")
         self.check_rec_btn.setToolTip("Review selected chains, missing backbone atoms, chain gaps, "
                                      "alternate conformations, waters, metals and pH without changing the structure.")
         self.check_rec_btn.clicked.connect(lambda: self.c.inspect_receptor(self._receptor_options()))
@@ -230,12 +251,16 @@ class DockingPanel(QScrollArea):
         self.rec_status = QLabel("")
         self.rec_status.setWordWrap(True)
         f.addRow(self.rec_label)
-        f.addRow("Chains", self.chains)
-        f.addRow(self.keep_metals)
-        f.addRow(self.retain_waters)
-        f.addRow("Water cutoff", self.water_cutoff)
-        f.addRow("Protonation pH", self.ph)
-        self.health_btn = QPushButton("Protein Health & Repair")
+        advanced = QWidget()
+        advanced_form = QFormLayout(advanced)
+        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        advanced_form.addRow("Chains", self.chains)
+        advanced_form.addRow(self.keep_metals)
+        advanced_form.addRow(self.retain_waters)
+        advanced_form.addRow("Water cutoff", self.water_cutoff)
+        advanced_form.addRow("Protonation pH", self.ph)
+        f.addRow(self._advanced_section("Advanced Settings", advanced))
+        self.health_btn = QPushButton("Open detailed diagnostics")
         self.health_btn.setToolTip("Open read-only structural diagnostics and navigate issues in the molecular viewer.")
         self.health_btn.clicked.connect(self.protein_health_requested.emit)
         f.addRow(self.health_btn)
@@ -320,10 +345,13 @@ class DockingPanel(QScrollArea):
         self.lig_seed = QSpinBox()
         self.lig_seed.setRange(0, 2_000_000_000)
         self.lig_seed.setValue(42)
-        f.addRow("Ionisation", self.ionize)
-        f.addRow("Input conformers", self.confs)
-        f.addRow("Random seed", self.lig_seed)
-        v.addLayout(f)
+        advanced = QWidget()
+        advanced_form = QFormLayout(advanced)
+        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        advanced_form.addRow("Ionisation", self.ionize)
+        advanced_form.addRow("Input conformers", self.confs)
+        advanced_form.addRow("Random seed", self.lig_seed)
+        v.addWidget(self._advanced_section("Advanced Settings", advanced))
         self.prep_lig_btn = QPushButton("Prepare Ligands")
         self.prep_lig_btn.clicked.connect(self._prepare_ligands)
         v.addWidget(self.prep_lig_btn)
@@ -502,12 +530,16 @@ class DockingPanel(QScrollArea):
         self.seed = QSpinBox()
         self.seed.setRange(0, 2_000_000_000)
         self.seed.setValue(42)
-        f.addRow("Scoring function", self.scoring)
         f.addRow("Exhaustiveness", self.exh)
         f.addRow("Number of poses", self.modes)
-        f.addRow("Energy range (kcal/mol)", self.erange)
-        f.addRow("CPU threads", self.cpu)
-        f.addRow("Random seed", self.seed)
+        advanced = QWidget()
+        advanced_form = QFormLayout(advanced)
+        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        advanced_form.addRow("Scoring function", self.scoring)
+        advanced_form.addRow("Energy range (kcal/mol)", self.erange)
+        advanced_form.addRow("CPU threads", self.cpu)
+        advanced_form.addRow("Random seed", self.seed)
+        f.addRow(self._advanced_section("Advanced Settings", advanced))
         self.run_readiness = QLabel()
         self.run_readiness.setWordWrap(True)
         f.addRow(self.run_readiness)
@@ -538,7 +570,7 @@ class DockingPanel(QScrollArea):
         self._running = running
         if running:
             self._execution_status = ""
-        self.run_btn.setEnabled(not running)
+        self.run_btn.setEnabled(not running and self._is_ready_to_run())
         self.cancel_btn.setEnabled(running)
         self._refresh_steps()
 
@@ -550,6 +582,13 @@ class DockingPanel(QScrollArea):
         if self._running and not self.c.docking_running:
             self._execution_status = status
         self._set_running(self.c.docking_running)
+
+    def _is_ready_to_run(self) -> bool:
+        ready_names = {lig.name for lig in self.c.prepared}
+        entry_names = {lig.name for lig in self.c.entries}
+        return (self.c.receptor is not None and bool(entry_names) and
+                entry_names <= ready_names and self.c.box is not None and
+                not self.c.validate_box().errors)
 
     def _on_reference(self, name: str) -> None:
         self.ref_label.setText(f"Validation reference: <b>{name}</b> (RMSD to crystal pose will be "
