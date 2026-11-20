@@ -24,7 +24,6 @@ class ProteinHealthPanel(QWidget):
         self.repair_result = None
         self.accepted_result = None
         self._filling = False
-        self._can_undo = False
         self.session = controller.protein_health
         self._busy = False
         outer=QVBoxLayout(self)
@@ -90,9 +89,6 @@ class ProteinHealthPanel(QWidget):
         self.accept_btn = QPushButton('Use repaired structure')
         self.accept_btn.clicked.connect(self._accept)
         repair_layout.addWidget(self.accept_btn)
-        self.undo_btn = QPushButton('Undo structure edit')
-        self.undo_btn.clicked.connect(self.c.undo_structure_edit)
-        repair_layout.addWidget(self.undo_btn)
         self.structure_export_btn = QPushButton('Export repaired structure')
         self.structure_export_btn.clicked.connect(self._export_structure)
         repair_layout.addWidget(self.structure_export_btn)
@@ -154,7 +150,6 @@ class ProteinHealthPanel(QWidget):
         self.session.cancelled.connect(lambda: self.summary.setText('Operation cancelled; the active structure is unchanged.'))
         self.session.plan_ready.connect(self._plan_ready)
         self.session.candidate_ready.connect(self._candidate_ready)
-        self.c.edit_history_changed.connect(self._history)
         for widget in content.findChildren(QWidget):
             if isinstance(widget,(QPushButton,QComboBox,QDoubleSpinBox,QListWidget,QTextBrowser)):
                 policy=widget.sizePolicy()
@@ -178,7 +173,6 @@ class ProteinHealthPanel(QWidget):
         self.accept_btn.setText('Use loop model' if self.repair_result is not None and self.repair_result.loops else 'Use repaired structure')
         self.accept_btn.setEnabled(ready and self.repair_result is not None and self.repair_result.can_accept)
         self.comparison.setEnabled(not self._busy and self.repair_result is not None)
-        self.undo_btn.setEnabled(not self._busy and self._can_undo)
         result=self._exportable_result()
         self.structure_export_btn.setEnabled(not self._busy and result is not None and result.can_accept)
         for widget in (self.repair_scope,self.repair_ph,self.proposed_changes): widget.setEnabled(not self._busy)
@@ -327,10 +321,6 @@ class ProteinHealthPanel(QWidget):
                 if result: result.export_report(Path(path))
                 else: self.report.export(Path(path))
             except (OSError,ValueError) as exc: self.details.setPlainText(f'Cannot export report: {exc}')
-
-    def _history(self,undo,redo):
-        self._can_undo=undo
-        self._availability()
 
     def _exportable_result(self):
         if self.repair_result is not None: return self.repair_result
