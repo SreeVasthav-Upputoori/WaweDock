@@ -31,6 +31,15 @@ def test_menus_and_docks_exist(window):
     assert window.windowTitle() == "WaweDock"
 
 
+def test_help_guide_action_exists_and_guide_is_bundled(window):
+    assert window.actions_["help.guide"].text().replace("&", "") == "User Guide"
+    assert window.actions_["help.guide"].isEnabled()
+    from mds.core.paths import assets_dir
+    guide = assets_dir() / "help-guide.html"
+    assert guide.exists()
+    assert "WaweDock User Guide" in guide.read_text(encoding="utf-8")
+
+
 def test_default_workspace_prioritises_viewer(window):
     assert window.centralWidget() is window.workspace
     assert window.workspace.splitter.widget(1) is window.viewport
