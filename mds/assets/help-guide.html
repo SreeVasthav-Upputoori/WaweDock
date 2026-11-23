@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WaweDock User Guide</title>
+  <style>
+    :root {
+      --navy: #17324d;
+      --blue: #246bce;
+      --blue-soft: #eef5ff;
+      --amber: #fff4d6;
+      --amber-border: #d3a62b;
+      --text: #263746;
+      --muted: #667784;
+      --line: #dbe4ec;
+      --paper: #ffffff;
+      --page: #f4f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--page);
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.55;
+    }
+    .shell { max-width: 1180px; margin: 28px auto; display: grid; grid-template-columns: 240px 1fr; gap: 24px; }
+    nav {
+      position: sticky;
+      top: 28px;
+      align-self: start;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    nav strong { display: block; color: var(--navy); margin-bottom: 8px; }
+    nav a { display: block; color: var(--blue); text-decoration: none; padding: 5px 0; font-size: 14px; }
+    nav a:hover { text-decoration: underline; }
+    main {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 36px 44px 50px;
+    }
+    h1, h2, h3 { color: var(--navy); line-height: 1.22; }
+    h1 { font-size: 34px; margin: 0 0 8px; }
+    h2 { font-size: 24px; margin-top: 42px; padding-top: 18px; border-top: 1px solid var(--line); }
+    h3 { font-size: 18px; margin-top: 24px; }
+    .subtitle { color: var(--muted); font-size: 18px; margin: 0 0 24px; }
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      border-radius: 4px;
+      padding: 14px 16px;
+      margin: 18px 0;
+    }
+    .warning {
+      border-left-color: var(--amber-border);
+      background: var(--amber);
+    }
+    .steps { counter-reset: step; padding: 0; list-style: none; }
+    .steps li { position: relative; margin: 10px 0; padding-left: 38px; }
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute; left: 0; top: -1px;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: white;
+      text-align: center;
+      line-height: 28px;
+      font-weight: 700;
+    }
+    figure {
+      margin: 20px 0 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fafdff;
+    }
+    figure img { display: block; width: 100%; height: auto; }
+    figcaption { padding: 10px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0 22px; }
+    th, td { border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top; }
+    th { background: #edf3f8; color: var(--navy); }
+    code { background: #edf2f5; border-radius: 4px; padding: 2px 5px; }
+    pre { background: #172330; color: #f3f7fa; padding: 14px; border-radius: 6px; overflow-x: auto; }
+    .footer { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--muted); font-size: 13px; }
+    @media (max-width: 900px) {
+      .shell { display: block; margin: 0; }
+      nav { position: static; border-radius: 0; }
+      main { border-radius: 0; padding: 28px 20px 40px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <strong>WaweDock Guide</strong>
+      <a href="#quick-start">Quick start</a>
+      <a href="#window">Main window</a>
+      <a href="#protein">Load a protein</a>
+      <a href="#receptor">Prepare receptor</a>
+      <a href="#ligands">Prepare ligands</a>
+      <a href="#box">Create docking box</a>
+      <a href="#run">Run docking</a>
+      <a href="#review">Review poses</a>
+      <a href="#view">View and edit</a>
+      <a href="#projects">Projects and layouts</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+      <a href="#science">Scientific interpretation</a>
+    </nav>
+    <main>
+      <h1>WaweDock User Guide</h1>
+      <p class="subtitle">A clear, step-by-step guide to receptor preparation, ligand preparation, docking, and pose review.</p>
+
+      <section id="quick-start">
+        <h2>Quick start</h2>
+        <ol class="steps">
+          <li>Create or open a project.</li>
+          <li>Load a PDB or mmCIF protein.</li>
+          <li>Prepare the receptor.</li>
+          <li>Add and prepare ligands.</li>
+          <li>Create a docking box.</li>
+          <li>Run docking and review poses.</li>
+        </ol>
+        <div class="callout warning">
+          Ligand preparation, receptor PDBQT preparation, docking, and chemistry analysis require the <strong>Full edition</strong> and the optional chemistry backend. Protein viewing, selection, cleanup, and diagnostics remain available if the backend cannot load.
+        </div>
+      </section>
+
+      <section id="window">
+        <h2>Understand the main window</h2>
+        <figure>
+          <img src="help-images/help-main-window.png" alt="WaweDock main window">
+          <figcaption>Figure 1 — The Prepare workspace: Project Explorer on the left, 3D workspace in the centre, and Docking Setup on the right.</figcaption>
+        </figure>
+        <h3>Three workspaces</h3>
+        <table>
+          <tr><th>Workspace</th><th>Purpose</th></tr>
+          <tr><td><strong>1 Prepare</strong></td><td>Load and prepare proteins and ligands.</td></tr>
+          <tr><td><strong>2 Dock</strong></td><td>Set the binding site and docking parameters.</td></tr>
+          <tr><td><strong>3 Review</strong></td><td>Browse poses, scores, contacts, and interactions.</td></tr>
+        </table>
+        <p>Open additional panels with <strong>Window &gt; Panels</strong>, including Properties, Selection &amp; Cleanup, Prepare Receptor — Diagnostics, Preparation Report, Log, and Jobs.</p>
+      </section>
+
+      <section id="protein">
+        <h2>Load a protein</h2>
+        <ol class="steps">
+          <li>Select <strong>File &gt; Open Structure</strong>, or drag a PDB/mmCIF file into the window.</li>
+          <li>For an online structure, select <strong>File &gt; Fetch from PDB</strong> and enter a PDB ID such as <code>3PTB</code>.</li>
+          <li>Confirm that the protein appears under <strong>Proteins</strong> in Project Explorer.</li>
+        </ol>
+        <p>The imported structure remains the editable source structure. Choose <strong>Edit &gt; Show Editable Structure</strong> when you need to select or edit it.</p>
+        <figure>
+          <img src="help-images/help-receptor.png" alt="Receptor preparation step">
+          <figcaption>Figure 2 — A loaded protein is shown in Project Explorer and can be sent to receptor preparation.</figcaption>
+        </figure>
+      </section>
+
+      <section id="receptor">
+        <h2>Prepare the receptor</h2>
+        <p>In <strong>Docking Setup</strong>, expand <strong>1 Receptor Preparation</strong>.</p>
+        <ol class="steps">
+          <li>Optionally enter chains such as <code>A,B</code>. Leave the field blank to use all chains.</li>
+          <li>Keep <strong>Keep metal ions</strong> selected unless you have a reason to remove them.</li>
+          <li>Enable <strong>Retain binding-site waters</strong> only when nearby crystallographic waters are relevant.</li>
+          <li>Set protonation pH. The default is <strong>7.4</strong>.</li>
+          <li>Click <strong>Validate only</strong> to inspect issues without changing the structure.</li>
+          <li>Click <strong>Prepare Receptor</strong>.</li>
+        </ol>
+        <div class="callout">
+          Review <strong>Preparation Report</strong> after preparation. It records decisions, warnings, extracted ligands, and receptor PDBQT details.
+        </div>
+      </section>
+
+      <section id="ligands">
+        <h2>Add and prepare ligands</h2>
+        <p>Expand <strong>2 Ligand Preparation</strong>.</p>
+        <h3>Option A: Enter a SMILES string</h3>
+        <ol class="steps">
+          <li>Click <strong>SMILES</strong>.</li>
+          <li>Enter a SMILES string followed by an optional ligand name.</li>
+        </ol>
+        <h3>Option B: Import ligand files</h3>
+        <ol class="steps">
+          <li>Click <strong>Import</strong>.</li>
+          <li>Select SDF, MOL, MOL2, SMILES, CSV, or TXT ligand files.</li>
+        </ol>
+        <p>Open <strong>Advanced Settings</strong> to choose ionisation handling, input conformers, and the random seed. Then click <strong>Prepare Ligands</strong>.</p>
+        <figure>
+          <img src="help-images/help-ligands.png" alt="Ligand preparation controls">
+          <figcaption>Figure 3 — Imported or entered ligands appear in the ligand list; prepared ligands receive a check mark.</figcaption>
+        </figure>
+      </section>
+
+      <section id="box">
+        <h2>Create the docking box</h2>
+        <p>Switch to <strong>2 Dock</strong>, or expand <strong>3 Docking Box Configuration</strong>.</p>
+        <table>
+          <tr><th>Method</th><th>Use it when...</th></tr>
+          <tr><td>Co-crystal ligand</td><td>An extracted known ligand identifies the binding site.</td></tr>
+          <tr><td>Selected residues</td><td>You know the pocket residues.</td></tr>
+          <tr><td>Whole protein</td><td>You are running blind docking.</td></tr>
+          <tr><td>Manual</td><td>You have exact centre and size values.</td></tr>
+        </table>
+        <ol class="steps">
+          <li>Select a method.</li>
+          <li>For a ligand or residue pocket, set padding.</li>
+          <li>Click <strong>Create Box</strong>.</li>
+          <li>Confirm the box appears and has no red validation errors.</li>
+        </ol>
+        <figure>
+          <img src="help-images/help-box.png" alt="Docking box controls">
+          <figcaption>Figure 4 — Manual box setup with centre coordinates and size values in ångströms.</figcaption>
+        </figure>
+      </section>
+
+      <section id="run">
+        <h2>Run docking</h2>
+        <p>Expand <strong>4 Docking Execution</strong>.</p>
+        <ol class="steps">
+          <li>Review the receptor, ligand, and box readiness message.</li>
+          <li>Set exhaustiveness and the number of poses.</li>
+          <li>Adjust advanced CPU or seed settings if needed.</li>
+          <li>Click <strong>Run Docking</strong>, or press <strong>F5</strong>.</li>
+        </ol>
+        <p>Use <strong>Cancel</strong> to stop an active run. Open <strong>Jobs</strong> for progress and <strong>Log</strong> for job details.</p>
+      </section>
+
+      <section id="review">
+        <h2>Review poses and results</h2>
+        <p>Select <strong>3 Review</strong>. Click a pose row to display that pose in the 3D viewer.</p>
+        <figure>
+          <img src="help-images/help-review.png" alt="Pose review workspace">
+          <figcaption>Figure 5 — Pose table and analysis controls beside the molecular viewer.</figcaption>
+        </figure>
+        <h3>Review controls</h3>
+        <ul>
+          <li><strong>Search</strong> — find a ligand or pose.</li>
+          <li><strong>Display</strong> — hide the protein or keep a reference visible.</li>
+          <li><strong>Fit</strong> — fit the current view.</li>
+          <li><strong>Export</strong> — save CSV, Excel, SDF, or HTML metrics.</li>
+        </ul>
+        <div class="callout warning">
+          RMSD requires a valid reference pose. A docking score or RMSD value is not proof of binding or biological activity.
+        </div>
+      </section>
+
+      <section id="view">
+        <h2>View, measure, and edit</h2>
+        <h3>Viewer</h3>
+        <ul>
+          <li><strong>View &gt; Reset Camera</strong> fits the structure.</li>
+          <li><strong>View &gt; Label Protein Residues</strong> toggles residue labels.</li>
+          <li><strong>View &gt; Measure</strong> measures a distance, angle, or dihedral.</li>
+          <li><strong>View &gt; Full Screen</strong> hides panels; press <strong>Escape</strong> to restore.</li>
+          <li><strong>File &gt; Export Image</strong> saves a high-resolution PNG.</li>
+        </ul>
+        <h3>Selection and editing</h3>
+        <p>Use left-click for a residue or water, Shift/Ctrl-click for multiple items, Alt-drag for a lasso, and double-click for a complete component. Open <strong>Selection &amp; Cleanup</strong> for atom, residue, chain, and component operations.</p>
+        <p>Prepared receptors and docking poses remain read-only. Source structure edits use <strong>Edit &gt; Undo Structure Edit</strong> and <strong>Edit &gt; Redo Structure Edit</strong>.</p>
+      </section>
+
+      <section id="projects">
+        <h2>Projects and layouts</h2>
+        <h3>Projects</h3>
+        <ul>
+          <li><strong>File &gt; Save Project</strong> saves the current project.</li>
+          <li><strong>File &gt; Save Project As (copy)</strong> creates a copy.</li>
+          <li><strong>File &gt; Archive Project (zip)</strong> creates a portable archive.</li>
+          <li><strong>File &gt; Open Project</strong> reopens a project folder.</li>
+        </ul>
+        <h3>Layouts</h3>
+        <p>Use <strong>Window &gt; Save Layout As</strong>, <strong>Restore Layout</strong>, or <strong>Reset Layout</strong>. Panels can be moved, resized, closed, or detached.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <table>
+          <tr><th>Problem</th><th>Check</th></tr>
+          <tr><td>Ligand or receptor controls are disabled</td><td>Read the top notice and confirm the Full edition and chemistry backend are available.</td></tr>
+          <tr><td>Run Docking is disabled</td><td>Prepare the receptor and ligands, create a valid box, and resolve box errors.</td></tr>
+          <tr><td>Receptor preparation fails</td><td>Open Preparation Report and Log. Confirm that chains and the PDB/mmCIF file are valid.</td></tr>
+          <tr><td>Ligand preparation fails</td><td>Check the SMILES or ligand file, stereochemistry, and input protonation.</td></tr>
+          <tr><td>Viewer is blank</td><td>Try View &gt; Reset Camera. For startup problems, run the startup check.</td></tr>
+        </table>
+        <pre>.\.venv\Scripts\python.exe -m mds --startup-check</pre>
+      </section>
+
+      <section id="science">
+        <h2>Scientific interpretation</h2>
+        <p>Docking scores are empirical predictions in kcal/mol. They are not experimentally measured affinities and are not evidence of biological activity. Contact and interaction diagrams are calculated candidates, not experimental observations.</p>
+        <p>Protonation, tautomer choice, receptor repair, water handling, and binding-site selection affect results. Validate important findings using appropriate experimental or independent computational methods.</p>
+      </section>
+
+      <div class="footer">WaweDock — Professional User Guide<br>Use Help &gt; Scientific Interpretation Notice for the short scientific reminder.</div>
+    </main>
+  </div>
+</body>
+</html>
