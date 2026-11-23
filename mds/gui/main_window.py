@@ -363,6 +363,8 @@ class MainWindow(QMainWindow):
         a.add("window.save_layout", "&Save Layout As…", slot=self._save_named_layout)
         a.add("window.reset_layout", "&Reset Layout", slot=self._reset_layout)
         # Help
+        a.add("help.guide", "&User Guide", slot=self._open_help_guide,
+              tip="Open the WaweDock user guide")
         a.add("help.notice", "&Scientific Interpretation Notice", slot=self._show_scientific_notice)
         a.add("help.about", "&About WaweDock", slot=self._show_about)
 
@@ -420,7 +422,7 @@ class MainWindow(QMainWindow):
         self.delete_layout_menu.aboutToShow.connect(
             lambda: self._fill_layout_menu(self.delete_layout_menu, self.layouts.delete_named))
         m.addAction(a["window.reset_layout"])
-        menu("&Help", ["help.notice", None, "help.about"])
+        menu("&Help", ["help.guide", "help.notice", None, "help.about"])
 
     def _build_toolbars(self) -> None:
         a, sp = self.actions_, QStyle.StandardPixmap
@@ -680,9 +682,18 @@ class MainWindow(QMainWindow):
     def _on_receptor_prepared(self, result) -> None:
         raw = self.controller.source_pdb.stem if self.controller.source_pdb else "receptor"
         name = f"{raw} (prepared)"
+        # A second preparation of the same source replaces the previous overlay.
+        # Otherwise the project explorer and viewer retain duplicate objects with
+        # the same user-visible names.
+        for old_name in self._receptor_objects:
+            if self.viewer:
+                self.viewer.remove_object(old_name)
+            self.project_explorer.remove_object(old_name)
+        self._receptor_objects.clear()
+        self._reference_objects.clear()
         self._receptor_objects.append(name)
         if self.viewer:
-            self.viewer.add_object(name, result.prepared_pdb.read_text(), "pdb", "protein")
+            self.viewer.add_object(name, result.prepared_pdb.read_text(encoding="utf-8"), "pdb", "protein")
         self.project_explorer.upsert_object("Proteins", name, {
             "Type": "Prepared receptor (hydrogens added)", "Atoms": result.n_atoms,
             "PDBQT": result.pdbqt.name, "Warnings": len(result.report.warnings)}, kind="protein")
@@ -695,7 +706,7 @@ class MainWindow(QMainWindow):
                 self._receptor_objects.append(label)
                 if label not in self._reference_objects:
                     self._reference_objects.append(label)
-                self.viewer.add_object(label, h.extracted_to.read_text(), "pdb", "ligand")
+                self.viewer.add_object(label, h.extracted_to.read_text(encoding="utf-8"), "pdb", "ligand")
                 self.project_explorer.upsert_object("Ligands", label, {
                     "Type": "Co-crystal ligand (extracted)", "Atoms": h.atoms}, kind="ligand")
         self._refresh_review_references()
@@ -1121,6 +1132,12 @@ class MainWindow(QMainWindow):
 
     def _show_scientific_notice(self) -> None:
         QMessageBox.information(self, "Scientific Interpretation Notice", SCIENTIFIC_NOTICE)
+
+    def _open_help_guide(self) -> None:
+        guide = assets_dir() / "help-guide.html"
+        if not guide.exists():
+            guide = Path(__file__).resolve().parents[2] / "docs" / "help-guide.html"
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide)))
 
     def _show_about(self) -> None:
         box = QMessageBox(self)
