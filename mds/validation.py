@@ -29,14 +29,24 @@ from mds.engines import VinaEngine
 def redock(structure: Path, resname: str, smiles: str, out_dir: Path, *, exhaustiveness: int = 16,
            ionize: str = "simple", seed: int = 7) -> dict:
     out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
-    rec = prepare_receptor(Path(structure), out_dir / "receptor")
+    structure = Path(structure)
+    rec = prepare_receptor(structure, out_dir / "receptor")
+    resname = resname.upper()
     hetero = next((h for h in rec.hetero if h.name == resname.upper() and h.extracted_to), None)
     if hetero is None:
-        raise ValueError(f"Ligand {resname} not found in {Path(structure).name}")
+        raise ValueError(f"Ligand {resname} not found in {structure.name}")
     template = Chem.MolFromSmiles(smiles)
-    reference = reference_from_pdb_ligand(hetero.extracted_to, Chem.RemoveHs(template))
+    if template is None:
+        raise ValueError("The co-crystal ligand SMILES could not be parsed")
+    template = Chem.RemoveHs(template)
+    if template.GetNumHeavyAtoms() == 0:
+        raise ValueError("The co-crystal ligand has no heavy atoms")
+    reference = reference_from_pdb_ligand(hetero.extracted_to, template)
     ligand = prepare_ligand(entry_from_smiles(smiles, resname), seed=seed, ionize=ionize)
+    if ligand.mol is None:
+        raise RuntimeError(f"Ligand {resname} could not be prepared: {ligand.report.render()}")
     box = box_from_ligand_file(hetero.extracted_to)
     engine = VinaEngine()
     outcome = run_docking(engine, rec.pdbqt, [ligand], box,
@@ -44,11 +54,13 @@ def redock(structure: Path, resname: str, smiles: str, out_dir: Path, *, exhaust
                           reference=reference)[0]
     if outcome.status != "ok":
         raise RuntimeError(outcome.message)
-    top_rmsd = outcome.reference_rmsd[0]
+    rmsds = [rmsd for rmsd in outcome.reference_rmsd if rmsd is not None]
+    top_rmsd = outcome.reference_rmsd[0] if outcome.reference_rmsd else None
+    best_rmsd = min(rmsds) if rmsds else None
     result = {
         "structure": Path(structure).name, "ligand": resname, "engine": engine.version(),
         "top_score_kcal_per_mol": outcome.poses[0].score, "top_pose_rmsd_A": top_rmsd,
-        "best_rmsd_any_pose_A": min(r for r in outcome.reference_rmsd if r is not None),
+        "best_rmsd_any_pose_A": best_rmsd,
         "success_top_pose": bool(top_rmsd is not None and top_rmsd < 2.0),
         "exhaustiveness": exhaustiveness, "seed": seed, "elapsed_s": round(time.monotonic() - t0, 1),
     }
