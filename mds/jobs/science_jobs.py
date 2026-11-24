@@ -10,7 +10,8 @@ from pathlib import Path
 
 from mds.chem.ligand import LigandEntry, PreparedLigand, prepare_ligand
 from mds.chem.interactions import InteractionResult, compute_interactions, protein_to_rdkit
-from mds.chem.receptor import ReceptorOptions, ReceptorResult, inspect_receptor, prepare_receptor
+from mds.chem.receptor import (HeteroResidue, ReceptorOptions, ReceptorResult, inspect_receptor,
+                               prepare_receptor)
 from mds.chem.report import PreparationError, Report
 from mds.chem.similarity import SimilarityResult, cluster, compare_to_reference
 from mds.chem.workflow import DockingParameters, LigandOutcome, run_docking
@@ -84,6 +85,46 @@ class PrepareReceptorJob(Job):
         ctx.progress(5, "Cleaning structure and adding hydrogens")
         result = prepare_receptor(self.source, self.out_dir, self.options)
         ctx.progress(100, "Receptor ready")
+        return result
+
+
+class RedockValidationJob(Job):
+    """Run the independent redocking validation pipeline in a background job."""
+
+    def __init__(self, source: Path, out_dir: Path, hetero: HeteroResidue, *,
+                 exhaustiveness: int = 16, ionize: str = "simple", seed: int = 7) -> None:
+        self.source, self.out_dir = Path(source), Path(out_dir)
+        self.hetero = hetero
+        self.exhaustiveness = exhaustiveness
+        self.ionize = ionize
+        self.seed = seed
+        self.name = f"Validate redocking {hetero.name}"
+
+    def run(self, ctx: JobContext) -> dict:
+        from rdkit import Chem
+        from mds.chem.poses import fetch_ccd_template
+        from mds.validation import redock
+
+        ctx.check_cancelled()
+        ctx.progress(5, "Fetching the co-crystal ligand definition")
+        cache = self.out_dir / "cache"
+        template = fetch_ccd_template(self.hetero.name, cache)
+        if template is None:
+            raise RuntimeError(f"No crystal ligand definition is available for {self.hetero.name}")
+        smiles = Chem.MolToSmiles(Chem.RemoveHs(template), isomericSmiles=True)
+        ctx.check_cancelled()
+        ctx.progress(15, "Preparing receptor and running validation docking")
+        result = redock(
+            self.source,
+            self.hetero.name,
+            smiles,
+            self.out_dir,
+            exhaustiveness=self.exhaustiveness,
+            ionize=self.ionize,
+            seed=self.seed,
+        )
+        ctx.check_cancelled()
+        ctx.progress(100, "Redocking validation complete")
         return result
 
 
