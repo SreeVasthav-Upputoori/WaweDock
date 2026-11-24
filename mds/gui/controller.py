@@ -61,6 +61,7 @@ class Controller(QObject):
     editing_view_requested = Signal()
     receptor_checked = Signal(object)           # read-only Report
     receptor_check_busy = Signal(bool)
+    receptor_preparation_busy = Signal(bool)
     receptor_prepared = Signal(object)          # ReceptorResult
     redock_validation_busy = Signal(bool)
     redock_validation_ready = Signal(object)    # dict | None
@@ -181,6 +182,7 @@ class Controller(QObject):
         detail = "\n".join(last_lines[-4:]) if last_lines else "Unknown error"
         if job_id == self._receptor_prep_job:
             self._receptor_prep_job = None
+            self.receptor_preparation_busy.emit(False)
             self.report.emit("Receptor preparation failed", detail)
             self.preparation_failed.emit("receptor", detail)
         if job_id == self._ligand_prep_job:
@@ -215,6 +217,10 @@ class Controller(QObject):
         if job_id == self._docking_job:
             self._docking_job = None
             self.message.emit("Docking cancelled")
+        if job_id == self._receptor_prep_job:
+            self._receptor_prep_job = None
+            self.receptor_preparation_busy.emit(False)
+            self.preparation_failed.emit("receptor", "Receptor preparation cancelled.")
         if job_id == self._interaction_job:
             self._interaction_job = None
         if job_id == self._consistency_job:
@@ -306,15 +312,23 @@ class Controller(QObject):
         if self.source_pdb is None:
             self.error.emit("No structure", "Open a PDB/mmCIF structure first (File > Open Structure).")
             return
+        if self._receptor_prep_job is not None:
+            self.message.emit("Receptor preparation is already running.")
+            return
         project = self.ensure_project()
         out = project.prepared_dir("receptor")
         source = self.source_pdb
-        self._receptor_prep_job = self._submit(
-            PrepareReceptorJob(source, out, options),
-            lambda result: self._receptor_done(result) if self.source_pdb == source else None)
+        def done(result):
+            self._receptor_prep_job = None
+            self.receptor_preparation_busy.emit(False)
+            if self.source_pdb == source:
+                self._receptor_done(result)
+        self._receptor_prep_job = self._submit(PrepareReceptorJob(source, out, options), done)
+        self.receptor_preparation_busy.emit(True)
 
     def _receptor_done(self, result: ReceptorResult) -> None:
         self._receptor_prep_job = None
+        self.receptor_preparation_busy.emit(False)
         self._contact_queue.clear()
         self._cached_protein_rdkit = None
         self.receptor = result
