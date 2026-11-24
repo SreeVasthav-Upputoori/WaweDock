@@ -24,7 +24,8 @@ from mds.jobs.latest import LatestJobQueue
 from mds.jobs import Job, JobRunner
 from mds.jobs.science_jobs import (DockingJob, FetchPdbJob, InteractionJob, LigandPrepOutcome,
                                    PoseConsistencyJob, PrepareLigandsJob, PrepareReceptorJob,
-                                   InspectReceptorJob, ContactsJob, SimilarityJob)
+                                   InspectReceptorJob, ContactsJob, SimilarityJob,
+                                   RedockValidationJob)
 from mds.project import Project
 
 log = logging.getLogger("mds.controller")
@@ -61,6 +62,8 @@ class Controller(QObject):
     receptor_checked = Signal(object)           # read-only Report
     receptor_check_busy = Signal(bool)
     receptor_prepared = Signal(object)          # ReceptorResult
+    redock_validation_busy = Signal(bool)
+    redock_validation_ready = Signal(object)    # dict | None
     ligands_changed = Signal()
     ligands_prepared = Signal(object)           # LigandPrepOutcome
     preparation_failed = Signal(str, str)        # kind, message
@@ -106,6 +109,7 @@ class Controller(QObject):
         self._receptor_prep_job: int | None = None
         self._ligand_prep_job: int | None = None
         self._receptor_check_job: int | None = None
+        self._redock_validation_job: int | None = None
         self._interaction_job: int | None = None
         self._consistency_job: int | None = None
         self._cached_protein_rdkit = None             # (receptor_pdb path, RDKit Mol)
@@ -183,6 +187,11 @@ class Controller(QObject):
             self._ligand_prep_job = None
             self.report.emit("Ligand preparation failed", detail)
             self.preparation_failed.emit("ligands", detail)
+        if job_id == self._redock_validation_job:
+            self._redock_validation_job = None
+            self.redock_validation_busy.emit(False)
+            self.redock_validation_ready.emit(None)
+            self.report.emit("Redocking validation failed", detail)
         if self._callbacks.pop(job_id, None) is None:
             return
         last = detail
@@ -473,6 +482,47 @@ class Controller(QObject):
             self.message.emit(f"{hetero.name} queued for redocking; box set around the crystal ligand")
         cache = self.ensure_project().prepared_dir("cache")
         self._submit(_ReferenceJob(hetero, cache), done)
+
+    def validate_redocking(self, hetero: HeteroResidue, *, exhaustiveness: int = 16,
+                           ionize: str = "simple", seed: int = 7) -> None:
+        """Run an independent co-crystal pose-reproduction validation in the background."""
+        if not self._require_chemistry():
+            return
+        if self.source_pdb is None:
+            self.error.emit("No structure", "Open a PDB/mmCIF structure first.")
+            return
+        if self._redock_validation_job is not None:
+            self.message.emit("Redocking validation is already running.")
+            return
+        project = self.ensure_project()
+        source = self.source_pdb
+        out = project.prepared_dir("redocking") / hetero.name.upper()
+
+        def done(result):
+            self._redock_validation_job = None
+            if self.source_pdb != source or self.project is not project:
+                return
+            self.redock_validation_busy.emit(False)
+            self.redock_validation_ready.emit(result)
+            rmsd = result.get("top_pose_rmsd_A")
+            verdict = "SUCCESS (<2 Å)" if result.get("success_top_pose") else "NOT reproduced (≥2 Å)"
+            rmsd_text = f"{rmsd:.2f} Å" if isinstance(rmsd, (int, float)) else "not available"
+            score = result.get("top_score_kcal_per_mol")
+            score_text = f"{score:.2f} kcal/mol" if isinstance(score, (int, float)) else "not available"
+            self.report.emit(
+                "Redocking validation",
+                f"{hetero.label}\nTop-pose RMSD: {rmsd_text}\n"
+                f"Top-pose score: {score_text}\nResult: {verdict}\n"
+                f"Validation JSON: {out / 'validation.json'}",
+            )
+            self.message.emit(f"Redocking validation: {verdict}; top-pose RMSD {rmsd_text}")
+
+        self._redock_validation_job = self._submit(
+            RedockValidationJob(source, out, hetero, exhaustiveness=exhaustiveness,
+                                ionize=ionize, seed=seed),
+            done,
+        )
+        self.redock_validation_busy.emit(True)
 
     # ------------------------------------------------------------- docking
     def run_docking(self, params: DockingParameters) -> None:
