@@ -201,3 +201,18 @@ def test_controller_submits_redocking_validation_job(panel, monkeypatch):
     assert job.ionize == 'simple'
     assert job.seed == 99
     assert panel.c._redock_validation_job == 77
+
+
+def test_receptor_preparation_busy_state(panel):
+    panel._set_receptor_preparation_busy(True)
+    assert panel.prep_rec_btn.text() == 'Preparing Receptor...'
+    assert not panel.prep_rec_btn.isEnabled()
+    assert not panel.check_rec_btn.isEnabled()
+    assert 'Preparing' in panel.rec_status.text()
+
+    panel.c.chemistry = SimpleNamespace(available=True)
+    panel.c.source_pdb = Path('protein.pdb')
+    panel._set_receptor_preparation_busy(False)
+    assert panel.prep_rec_btn.text() == 'Prepare Receptor'
+    assert panel.prep_rec_btn.isEnabled()
+    assert panel.check_rec_btn.isEnabled()
