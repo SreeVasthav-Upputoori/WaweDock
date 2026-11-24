@@ -93,6 +93,8 @@ class DockingPanel(QScrollArea):
         c.receptor_prepared.connect(self._on_receptor)
         c.receptor_checked.connect(self._on_receptor_check)
         c.receptor_check_busy.connect(self._set_receptor_check_busy)
+        c.redock_validation_busy.connect(self._set_redock_validation_busy)
+        c.redock_validation_ready.connect(self._on_redock_validation_ready)
         c.hetero_found.connect(self._on_hetero)
         c.ligands_changed.connect(self._refresh_ligands)
         c.ligands_prepared.connect(lambda _o: self._refresh_ligands())
@@ -333,6 +335,16 @@ class DockingPanel(QScrollArea):
                                    "experimental pose after docking.")
         self.redock_btn.clicked.connect(self._redock)
         v.addWidget(self.redock_btn)
+        self.validate_redock_btn = QPushButton("Validate by Redocking")
+        self.validate_redock_btn.setToolTip(
+            "Fetch the co-crystal ligand definition, rebuild the receptor, and dock independently "
+            "to test whether the crystal pose is reproduced. RMSD below 2 A is the conventional success criterion."
+        )
+        self.validate_redock_btn.clicked.connect(self._validate_redocking)
+        v.addWidget(self.validate_redock_btn)
+        self.validate_redock_status = QLabel("")
+        self.validate_redock_status.setWordWrap(True)
+        v.addWidget(self.validate_redock_status)
         f = QFormLayout()
         f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.ionize = QComboBox()
@@ -392,6 +404,52 @@ class DockingPanel(QScrollArea):
         label, ok = QInputDialog.getItem(self, "Redock co-crystal ligand", "Ligand:", labels, 0, False)
         if ok:
             self.c.redock_cocrystal(candidates[labels.index(label)])
+
+    def _validate_redocking(self) -> None:
+        candidates = [h for h in self.c.hetero if h.kind == "ligand" and h.extracted_to]
+        if not candidates:
+            self.c.error.emit(
+                "No co-crystal ligand",
+                "Prepare the receptor first; extracted hetero groups are listed after preparation.",
+            )
+            return
+        if len(candidates) == 1:
+            hetero = candidates[0]
+        else:
+            labels = [h.label for h in candidates]
+            label, ok = QInputDialog.getItem(
+                self, "Validate by Redocking", "Co-crystal ligand:", labels, 0, False
+            )
+            if not ok:
+                return
+            hetero = candidates[labels.index(label)]
+        self.validate_redock_status.setText("Running independent redocking validation...")
+        self.c.validate_redocking(
+            hetero,
+            exhaustiveness=self.exh.value(),
+            ionize=self.ionize.currentData(),
+            seed=self.lig_seed.value(),
+        )
+
+    def _set_redock_validation_busy(self, busy: bool) -> None:
+        self.validate_redock_btn.setEnabled(not busy)
+        if busy:
+            self.validate_redock_status.setText("Running independent redocking validation...")
+        elif self.validate_redock_status.text() == "Running independent redocking validation...":
+            self.validate_redock_status.clear()
+
+    def _on_redock_validation_ready(self, result) -> None:
+        if not result:
+            self.validate_redock_status.setText("Validation failed. Open Preparation Report or Log for details.")
+            return
+        rmsd = result.get("top_pose_rmsd_A")
+        rmsd_text = f"{rmsd:.2f} Å" if isinstance(rmsd, (int, float)) else "not available"
+        score = result.get("top_score_kcal_per_mol")
+        score_text = f"{score:.2f} kcal/mol" if isinstance(score, (int, float)) else "not available"
+        verdict = "SUCCESS (<2 Å)" if result.get("success_top_pose") else "NOT reproduced (≥2 Å)"
+        self.validate_redock_status.setText(
+            f"{verdict}\nTop-pose RMSD: {rmsd_text}\nTop-pose score: {score_text}"
+        )
 
     def _prepare_ligands(self) -> None:
         self.show_step(1)
