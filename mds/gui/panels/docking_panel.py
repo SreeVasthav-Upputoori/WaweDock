@@ -93,6 +93,7 @@ class DockingPanel(QScrollArea):
         c.receptor_prepared.connect(self._on_receptor)
         c.receptor_checked.connect(self._on_receptor_check)
         c.receptor_check_busy.connect(self._set_receptor_check_busy)
+        c.receptor_preparation_busy.connect(self._set_receptor_preparation_busy)
         c.redock_validation_busy.connect(self._set_redock_validation_busy)
         c.redock_validation_ready.connect(self._on_redock_validation_ready)
         c.hetero_found.connect(self._on_hetero)
@@ -274,7 +275,6 @@ class DockingPanel(QScrollArea):
 
     def _prepare_receptor(self) -> None:
         self.show_step(0)
-        self.rec_status.setText("Preparing...")
         self.c.prepare_receptor(self._receptor_options())
 
     def _receptor_options(self) -> ReceptorOptions:
@@ -291,6 +291,19 @@ class DockingPanel(QScrollArea):
             self.rec_check.setText("Checking receptor...")
         elif self.rec_check.text() == "Checking receptor...":
             self.rec_check.clear()
+
+    def _set_receptor_preparation_busy(self, busy: bool) -> None:
+        for widget in (self.prep_rec_btn, self.check_rec_btn, self.chains, self.ph,
+                       self.keep_metals, self.retain_waters, self.water_cutoff):
+            widget.setEnabled(not busy)
+        if busy:
+            self.prep_rec_btn.setText("Preparing Receptor...")
+            self.rec_status.setText("Preparing receptor...")
+        else:
+            self.prep_rec_btn.setText("Prepare Receptor")
+            chemistry_available = self.c.chemistry is not None and self.c.chemistry.available
+            self.check_rec_btn.setEnabled(True)
+            self.prep_rec_btn.setEnabled(chemistry_available and self.c.source_pdb is not None)
 
     def _on_receptor_check(self, report) -> None:
         issues = report.errors + report.warnings
