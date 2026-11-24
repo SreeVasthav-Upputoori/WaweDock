@@ -143,3 +143,61 @@ def test_existing_actions_forward_all_parameters(panel, monkeypatch):
     panel._run()
     assert panel.current_step == 3
     assert (calls[-1].exhaustiveness, calls[-1].num_modes, calls[-1].seed, calls[-1].scoring) == (32, 5, 123, 'vinardo')
+
+
+def test_validate_by_redocking_forwards_settings(panel, monkeypatch):
+    hetero = SimpleNamespace(name='BEN', label='BEN A:1', kind='ligand', extracted_to=Path('BEN.pdb'))
+    panel.c.hetero = [hetero]
+    calls = []
+    monkeypatch.setattr(
+        panel.c,
+        'validate_redocking',
+        lambda candidate, **options: calls.append((candidate, options)),
+    )
+    panel.exh.setValue(24)
+    panel.ionize.setCurrentIndex(1)
+    panel.lig_seed.setValue(99)
+
+    panel._validate_redocking()
+
+    assert calls == [(hetero, {'exhaustiveness': 24, 'ionize': 'simple', 'seed': 99})]
+    assert panel.validate_redock_status.text() == 'Running independent redocking validation...'
+
+
+def test_validate_by_redocking_busy_and_result(panel):
+    panel._set_redock_validation_busy(True)
+    assert not panel.validate_redock_btn.isEnabled()
+    assert 'Running independent' in panel.validate_redock_status.text()
+
+    panel._on_redock_validation_ready({
+        'top_pose_rmsd_A': 1.25,
+        'top_score_kcal_per_mol': -7.5,
+        'success_top_pose': True,
+    })
+    panel._set_redock_validation_busy(False)
+
+    assert panel.validate_redock_btn.isEnabled()
+    assert 'SUCCESS (<2 Å)' in panel.validate_redock_status.text()
+    assert '1.25 Å' in panel.validate_redock_status.text()
+
+
+def test_controller_submits_redocking_validation_job(panel, monkeypatch):
+    hetero = SimpleNamespace(name='BEN', label='BEN A:1', kind='ligand', extracted_to=Path('BEN.pdb'))
+    panel.c.source_pdb = Path('protein.pdb')
+    monkeypatch.setattr(panel.c, '_require_chemistry', lambda: True)
+    submitted = []
+
+    def submit(job, done):
+        submitted.append((job, done))
+        return 77
+
+    monkeypatch.setattr(panel.c, '_submit', submit)
+    panel.c.validate_redocking(hetero, exhaustiveness=24, ionize='simple', seed=99)
+
+    assert len(submitted) == 1
+    job, _done = submitted[0]
+    assert job.name == 'Validate redocking BEN'
+    assert job.exhaustiveness == 24
+    assert job.ionize == 'simple'
+    assert job.seed == 99
+    assert panel.c._redock_validation_job == 77
