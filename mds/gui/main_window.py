@@ -377,9 +377,14 @@ class MainWindow(QMainWindow):
                 m.addSeparator() if k is None else m.addAction(a[k])
             return m
 
-        menu("&File", ["file.new", "file.open", "file.save", "file.save_as", "file.archive", None,
-                       "file.open_structure", "file.fetch_pdb", "file.import_ligands", "file.export_image", None,
-                       "file.exit"])
+        file_menu = menu("&File", ["file.new", "file.open", "file.save", "file.save_as", "file.archive"])
+        self.recent_projects_menu = file_menu.addMenu("Recent Projects")
+        self.recent_projects_menu.aboutToShow.connect(self._refresh_recent_projects_menu)
+        file_menu.addSeparator()
+        for key in ("file.open_structure", "file.fetch_pdb", "file.import_ligands", "file.export_image"):
+            file_menu.addAction(a[key])
+        file_menu.addSeparator()
+        file_menu.addAction(a["file.exit"])
         menu("&Edit", ["edit.undo", "edit.redo", "edit.delete", "edit.show_structure", None,
                        "edit.select_around", "edit.clear_selection"])
         m = mb.addMenu("&View")
@@ -468,6 +473,7 @@ class MainWindow(QMainWindow):
         c.message.connect(lambda m: self.status.showMessage(m, 8000))
         c.error.connect(self._show_error)
         c.project_changed.connect(self._update_title)
+        c.project_changed.connect(self._remember_current_project)
         c.structure_loaded.connect(self._on_structure_loaded)
         c.structure_edited.connect(self._on_structure_edited)
         c.receptor_prepared.connect(self._on_receptor_prepared)
@@ -888,6 +894,55 @@ class MainWindow(QMainWindow):
         return self.settings.value("paths/last_dir", QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.DocumentsLocation))
 
+    def _recent_project_paths(self) -> list[Path]:
+        value = self.settings.value("projects/recent", [])
+        entries = [value] if isinstance(value, str) else list(value or [])
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for entry in entries:
+            path = Path(str(entry)).expanduser()
+            key = str(path.resolve()).casefold()
+            if key in seen or not path.is_dir() or not (path / "project.json").is_file():
+                continue
+            seen.add(key)
+            paths.append(path)
+        retained = paths[:8]
+        if [str(path) for path in retained] != [str(entry) for entry in entries]:
+            self.settings.setValue("projects/recent", [str(path) for path in retained])
+        return retained
+
+    def _remember_current_project(self) -> None:
+        project = self.controller.project
+        if project is None:
+            return
+        current = project.root.resolve()
+        paths = [path for path in self._recent_project_paths() if path.resolve() != current]
+        self.settings.setValue("projects/recent", [str(current), *(str(path) for path in paths[:7])])
+
+    def _refresh_recent_projects_menu(self) -> None:
+        self.recent_projects_menu.clear()
+        paths = self._recent_project_paths()
+        if not paths:
+            empty = self.recent_projects_menu.addAction("(no recent projects)")
+            empty.setEnabled(False)
+            return
+        for path in paths:
+            action = self.recent_projects_menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.triggered.connect(
+                lambda _checked=False, project_path=path: self._open_recent_project(project_path)
+            )
+
+    def _open_recent_project(self, path: Path) -> None:
+        try:
+            project = Project.open(path)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            self._recent_project_paths()
+            self._refresh_recent_projects_menu()
+            QMessageBox.warning(self, "Open Recent Project", str(exc))
+            return
+        self._switch_to_project(project)
+
     def _remember_dir(self, path: str) -> None:
         self.settings.setValue("paths/last_dir", str(Path(path).parent))
 
@@ -926,6 +981,9 @@ class MainWindow(QMainWindow):
         except (FileNotFoundError, ValueError) as exc:
             QMessageBox.warning(self, "Open Project", str(exc))
             return
+        self._switch_to_project(project)
+
+    def _switch_to_project(self, project: Project) -> None:
         if not self._confirm_project_switch("open another project"):
             return
         self._reset_workspace()
