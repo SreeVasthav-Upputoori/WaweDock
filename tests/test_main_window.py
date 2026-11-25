@@ -5,13 +5,14 @@ import logging
 import pytest
 from conftest import wait_until
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QDockWidget, QToolBar
+from PySide6.QtWidgets import QDockWidget, QMessageBox, QToolBar
 
 from mds.gui.layouts import LayoutManager
 from mds.gui.main_window import MainWindow
 from mds.gui.theme import Theme
 from mds.jobs import JobState
 from mds.jobs.diagnostics import JobSystemSelfTest
+from mds.project import Project
 
 
 @pytest.fixture
@@ -38,6 +39,39 @@ def test_help_guide_action_exists_and_guide_is_bundled(window):
     guide = assets_dir() / "help-guide.html"
     assert guide.exists()
     assert "WaweDock User Guide" in guide.read_text(encoding="utf-8")
+
+
+def test_recent_projects_remember_newest_and_prune_missing(window, tmp_path):
+    first = Project.create(tmp_path / "first")
+    second = Project.create(tmp_path / "second")
+    window.controller.set_project(first)
+    window.controller.set_project(second)
+
+    assert window._recent_project_paths() == [second.root, first.root]
+
+    first.root.joinpath("project.json").unlink()
+    assert window._recent_project_paths() == [second.root]
+    assert window.settings.value("projects/recent") == [str(second.root)]
+
+
+def test_recent_project_menu_opens_selected_project(window, tmp_path, monkeypatch):
+    current = Project.create(tmp_path / "current")
+    target = Project.create(tmp_path / "target")
+    window.controller.set_project(current)
+    window.settings.setValue("projects/recent", [str(target.root), str(current.root)])
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Discard,
+    )
+    monkeypatch.setattr(window.controller, "load_project_state", lambda: None)
+
+    window._refresh_recent_projects_menu()
+    actions = window.recent_projects_menu.actions()
+    assert [action.text() for action in actions] == ["target", "current"]
+    actions[0].trigger()
+
+    assert window.controller.project.root == target.root
 
 
 def test_default_workspace_prioritises_viewer(window):
